@@ -17,10 +17,7 @@ COPY main.go .
 COPY vendor/ vendor/
 
 # Build DexShell with vendor mode
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o dexshell .
-
-# Verify the binary was created
-RUN ls -la /build/dexshell && /build/dexshell --help || true
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dexshell .
 
 # Runtime stage
 FROM debian:trixie-slim
@@ -28,7 +25,6 @@ FROM debian:trixie-slim
 # Install runtime tools and "pamer" tools
 RUN apt update && apt upgrade -y && \
     apt install -y \
-    # Shell & basic tools
     bash \
     curl \
     wget \
@@ -37,12 +33,10 @@ RUN apt update && apt upgrade -y && \
     iputils-ping \
     traceroute \
     dnsutils \
-    # System info & monitoring (pamer tools)
     fastfetch \
     htop \
     btop \
     glances \
-    # Terminal tools
     tmux \
     vim \
     nano \
@@ -53,37 +47,26 @@ RUN apt update && apt upgrade -y && \
     fd-find \
     fzf \
     tree \
-    # Network tools
     nmap \
     tcpdump \
     whois \
-    # System utilities
     strace \
     lsof \
     psmisc \
-    # File tools
     zip \
     unzip \
     rsync \
-    # Development
     git \
     python3 \
     python3-pip \
-    # SSH server
     openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /build/dexshell /app/dexshell
+COPY --from=builder /build/dexshell .
 
-# Make the binary executable
-RUN chmod +x /app/dexshell
+RUN chmod +x dexshell
 
-# Verify the binary exists in runtime
-RUN ls -la /app/dexshell
-
-# Expose default shell port and SSH port
 EXPOSE 4444 2222
 
-# Default to bind shell on port 4444
-CMD ["/app/dexshell", "bind", "4444"]
+CMD ["./dexshell", "bind", "4444"]
