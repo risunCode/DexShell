@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Ensure volume layout + print where tools should install.
+set -euo pipefail
+HOME_DIR="${HOME:-/app}"
+export HOME="$HOME_DIR"
+
+dirs=(
+  bin .local/bin .config .cache .local/share .local/state .dexshell projects
+  .npm-global .bun .hermes .cargo/bin go/bin .cache/npm .cache/uv .cache/go-build
+  .config/claude .codex .config/opencode .kilo .hermes/logs
+)
+for d in "${dirs[@]}"; do
+  mkdir -p "$HOME_DIR/$d"
+done
+
+# Prefer linking known volume tools into $HOME/bin when present
+link_if() {
+  local src="$1" name="${2:-}"
+  [[ -x "$src" ]] || return 0
+  [[ -n "$name" ]] || name="$(basename "$src")"
+  ln -sfn "$src" "$HOME_DIR/bin/$name"
+}
+
+link_if "$HOME_DIR/.bun/bin/bun" bun
+link_if "$HOME_DIR/.bun/bin/bunx" bunx
+link_if "$HOME_DIR/.npm-global/bin/claude" claude
+link_if "$HOME_DIR/.npm-global/bin/codex" codex
+link_if "$HOME_DIR/.npm-global/bin/opencode" opencode
+link_if "$HOME_DIR/.npm-global/bin/kilo" kilo
+link_if "$HOME_DIR/.local/bin/claude" claude
+link_if "$HOME_DIR/.local/bin/codex" codex
+link_if "$HOME_DIR/.hermes/hermes-agent/.venv/bin/hermes" hermes.bin
+link_if "$HOME_DIR/.hermes/bin/hermes" hermes.bin
+
+cat <<EOF
+DexShell volume layout ready under: $HOME_DIR
+
+Install targets (survive redeploy when volume mounts /app):
+  binaries     -> \$HOME/bin  or  \$HOME/.local/bin
+  npm -g       -> \$HOME/.npm-global   (npm_config_prefix)
+  bun -g       -> \$HOME/.bun          (BUN_INSTALL)
+  pip --user   -> \$HOME/.local        (PYTHONUSERBASE)
+  Hermes       -> \$HOME/.hermes       (run: dexshell-install-hermes)
+  Claude/Codex configs use HOME/XDG under /app automatically
+
+PATH already prefers volume bins. No manual export needed after login.
+EOF

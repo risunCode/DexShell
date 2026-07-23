@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Volume-first Hermes launcher. Prefer install under /app (persistent), else system.
+set -euo pipefail
+
+HOME_DIR="${HOME:-/app}"
+export HOME="$HOME_DIR"
+export HERMES_HOME="${HERMES_HOME:-$HOME_DIR/.hermes}"
+export PATH="$HOME_DIR/bin:$HOME_DIR/.local/bin:$HOME_DIR/.hermes/bin:$HOME_DIR/.hermes/hermes-agent/.venv/bin:/usr/local/bin:/usr/local/share/uv/bin:${PATH:-}"
+
+candidates=(
+  "$HOME_DIR/bin/hermes.bin"
+  "$HOME_DIR/.local/bin/hermes"
+  "$HOME_DIR/.hermes/bin/hermes"
+  "$HOME_DIR/.hermes/hermes-agent/.venv/bin/hermes"
+  "$HOME_DIR/.hermes/hermes-agent/bin/hermes"
+  "/usr/local/lib/hermes-agent/.venv/bin/hermes"
+  "/usr/local/bin/hermes.real"
+)
+
+for c in "${candidates[@]}"; do
+  if [[ -x "$c" && "$c" != "$0" ]]; then
+    exec "$c" "$@"
+  fi
+done
+
+# Try python module from volume checkout
+if [[ -x "$HOME_DIR/.hermes/hermes-agent/.venv/bin/python" ]]; then
+  if "$HOME_DIR/.hermes/hermes-agent/.venv/bin/python" -c "import hermes" 2>/dev/null; then
+    exec "$HOME_DIR/.hermes/hermes-agent/.venv/bin/python" -m hermes "$@"
+  fi
+fi
+
+echo "hermes not found on volume or system." >&2
+echo "Install onto the volume (survives redeploy):" >&2
+echo "  dexshell-install-hermes" >&2
+exit 127

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Install Hermes Agent fully onto the /app volume so redeploys keep it.
+set -euo pipefail
+
+HOME_DIR="${HOME:-/app}"
+export HOME="$HOME_DIR"
+export HERMES_HOME="${HERMES_HOME:-$HOME_DIR/.hermes}"
+export PATH="$HOME_DIR/bin:$HOME_DIR/.local/bin:/usr/local/bin:/usr/local/share/uv/bin:${PATH:-}"
+export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$HOME_DIR/.cache/uv}"
+export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$HOME_DIR/.local/share/uv/python}"
+
+mkdir -p \
+  "$HOME_DIR/bin" \
+  "$HOME_DIR/.local/bin" \
+  "$HERMES_HOME" \
+  "$HERMES_HOME/logs" \
+  "$HERMES_HOME/bin" \
+  "$HOME_DIR/.cache/uv" \
+  "$HOME_DIR/.local/share/uv/python"
+
+echo "[dexshell] Installing Hermes into volume:"
+echo "  HERMES_HOME=$HERMES_HOME"
+echo "  code dir   =$HERMES_HOME/hermes-agent"
+
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- \
+  --skip-browser \
+  --hermes-home "$HERMES_HOME" \
+  --dir "$HERMES_HOME/hermes-agent" \
+  "$@" || true
+
+# If installer still dropped files under /usr/local (root FHS mode), copy onto volume.
+if [[ ! -d "$HERMES_HOME/hermes-agent" && -d /usr/local/lib/hermes-agent ]]; then
+  echo "[dexshell] Copying /usr/local/lib/hermes-agent -> $HERMES_HOME/hermes-agent"
+  rm -rf "$HERMES_HOME/hermes-agent"
+  cp -a /usr/local/lib/hermes-agent "$HERMES_HOME/hermes-agent"
+fi
+
+# Locate a real hermes executable and expose it on the volume PATH.
+real=""
+for c in \
+  "$HERMES_HOME/hermes-agent/.venv/bin/hermes" \
+  "$HERMES_HOME/hermes-agent/bin/hermes" \
+  "$HOME_DIR/.local/bin/hermes" \
+  /usr/local/lib/hermes-agent/.venv/bin/hermes \
+  /usr/local/bin/hermes.real
+do
+  if [[ -x "$c" ]]; then
+    real="$c"
+    break
+  fi
+done
+
+# Broader search
+if [[ -z "$real" ]]; then
+  real="$(find "$HERMES_HOME" /usr/local/lib/hermes-agent -type f -name hermes 2>/dev/null | head -n 1 || true)"
+fi
+
+if [[ -n "$real" && -x "$real" ]]; then
+  ln -sfn "$real" "$HOME_DIR/bin/hermes.bin"
+  ln -sfn "$real" "$HERMES_HOME/bin/hermes"
+  echo "[dexshell] Linked volume hermes -> $real"
+else
+  echo "[dexshell] WARNING: could not find hermes binary after install" >&2
+fi
+
+# Best-effort messaging deps inside volume venv
+venv_pip=""
+for p in \
+  "$HERMES_HOME/hermes-agent/.venv/bin/pip" \
+  "$HERMES_HOME/hermes-agent/.venv/bin/pip3"
+do
+  if [[ -x "$p" ]]; then venv_pip="$p"; break; fi
+done
+
+if [[ -n "$venv_pip" ]]; then
+  echo "[dexshell] Ensuring Telegram/Discord Python deps in volume venv..."
+  "$venv_pip" install -U pip wheel setuptools >/dev/null 2>&1 || true
+  "$venv_pip" install -U "python-telegram-bot>=21" "discord.py>=2" || true
+fi
+
+# If the upstream installer clobbered /usr/local/bin/hermes, keep the real binary
+# and restore our volume-first wrapper.
+if [[ -x /usr/local/bin/hermes ]] && ! grep -q 'Volume-first Hermes launcher' /usr/local/bin/hermes 2>/dev/null; then
+  mv -f /usr/local/bin/hermes /usr/local/bin/hermes.real
+  if [[ -x /opt/dexshell/wrappers/hermes ]]; then
+    install -m 755 /opt/dexshell/wrappers/hermes /usr/local/bin/hermes
+  fi
+fi
+
+hash -r || true
+echo "[dexshell] Done."
+echo "  which via wrapper: $(command -v hermes || true)"
+echo "  try: hermes --help"
+echo "  then: hermes gateway setup && hermes gateway start"
