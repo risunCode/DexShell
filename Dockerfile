@@ -1,5 +1,6 @@
-# Force-working DexShell image.
+# DexShell — SSH-first image.
 # Binary lives OUTSIDE /app so Railway volume mounts on /app cannot hide it.
+# /app is the persistent home (history, files, host key).
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /src
@@ -32,18 +33,21 @@ RUN apk add --no-cache \
     python3 \
     && rm -rf /var/cache/apk/*
 
-# Binary outside any likely volume mount path
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
 RUN chmod 755 /usr/local/bin/dexshell \
-    && test -x /usr/local/bin/dexshell \
-    && /usr/local/bin/dexshell 2>&1 | head -n 5 || true
+    && test -x /usr/local/bin/dexshell
 
-# App/data dir (safe for Railway volume mount at /app)
+# Persistent session/data dir (Railway volume should mount here)
 WORKDIR /app
 RUN mkdir -p /app
 
-ENV PATH="/usr/local/bin:${PATH}"
-EXPOSE 4444 2222
+ENV PATH="/usr/local/bin:${PATH}" \
+    HOME=/app \
+    SSH_USER=root \
+    SSH_PORT=4444 \
+    SSH_PASSWORD=changeme
 
-# Absolute path — never relative ./dexshell
-CMD ["/usr/local/bin/dexshell", "bind", "4444"]
+EXPOSE 4444
+
+# Absolute path + SSH-only
+CMD ["/usr/local/bin/dexshell", "ssh"]

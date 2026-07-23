@@ -11,17 +11,24 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	gossh "golang.org/x/crypto/ssh"
 )
 
+const (
+	defaultHome    = "/app"
+	hostKeyRelPath = ".dexshell/ssh_host_rsa_key"
+)
+
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+	// Default mode: SSH (deploy target). Other modes remain for local use.
+	mode := "ssh"
+	if len(os.Args) >= 2 {
+		mode = os.Args[1]
 	}
 
-	switch os.Args[1] {
+	switch mode {
 	case "reverse":
 		if len(os.Args) < 3 {
 			fmt.Fprintf(os.Stderr, "Usage: dexshell reverse <host:port>\n")
@@ -105,18 +112,23 @@ func bindShell(port string) error {
 }
 
 func sshServer() error {
-	// Load configuration from environment
-	password := getEnv("SSH_PASSWORD", "changeme")
-	port := getEnv("SSH_PORT", "2222")
+	password := getEnv("SSH_PASSWORD", "risuncode")
+	// Prefer explicit SSH_PORT, then platform PORT, then 4444 (public TCP).
+	port := getEnv("SSH_PORT", getEnv("PORT", "4444"))
 	user := getEnv("SSH_USER", "root")
+	home := getEnv("HOME", defaultHome)
 
-	// Generate host key
-	key, err := generateHostKey()
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return fmt.Errorf("prepare home %s: %w", home, err)
+	}
+	// Keep process home on the volume so shell history/files persist.
+	_ = os.Setenv("HOME", home)
+
+	key, err := loadOrCreateHostKey(filepath.Join(home, hostKeyRelPath))
 	if err != nil {
-		return fmt.Errorf("generate host key: %w", err)
+		return fmt.Errorf("host key: %w", err)
 	}
 
-	// Configure SSH server
 	config := &gossh.ServerConfig{
 		PasswordCallback: func(c gossh.ConnMetadata, pass []byte) (*gossh.Permissions, error) {
 			if c.User() == user && string(pass) == password {
@@ -127,7 +139,6 @@ func sshServer() error {
 	}
 	config.AddHostKey(key)
 
-	// Start listener
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		return fmt.Errorf("listen :%s: %w", port, err)
@@ -136,9 +147,9 @@ func sshServer() error {
 
 	fmt.Fprintf(os.Stderr, "[*] SSH server listening on 0.0.0.0:%s\n", port)
 	fmt.Fprintf(os.Stderr, "[*] User: %s\n", user)
-	fmt.Fprintf(os.Stderr, "[*] Connect with: ssh -p %s %s@<host>\n", port, user)
+	fmt.Fprintf(os.Stderr, "[*] Home (volume): %s\n", home)
+	fmt.Fprintf(os.Stderr, "[*] Connect: ssh -p %s %s@<host>\n", port, user)
 
-	// Accept connections
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -162,7 +173,6 @@ func handleSSHConnection(conn net.Conn, config *gossh.ServerConfig) {
 	log.Printf("connection from %s as %s", sshConn.RemoteAddr(), sshConn.User())
 	go gossh.DiscardRequests(reqs)
 
-	// Handle channels
 	for newChannel := range chans {
 		if newChannel.ChannelType() != "session" {
 			newChannel.Reject(gossh.UnknownChannelType, "unknown channel type")
@@ -183,7 +193,8 @@ func handleSSHSession(channel gossh.Channel, requests <-chan *gossh.Request) {
 	defer channel.Close()
 
 	cmd := shellCommand()
-	shellRequested := make(chan struct{})
+	ready := make(chan struct{})
+	var execPayload string
 
 	go func() {
 		for req := range requests {
@@ -192,8 +203,29 @@ func handleSSHSession(channel gossh.Channel, requests <-chan *gossh.Request) {
 				if req.WantReply {
 					req.Reply(true, nil)
 				}
-				close(shellRequested)
+				close(ready)
 				return
+			case "exec":
+				// payload is a length-prefixed string in SSH, but x/crypto exposes raw bytes
+				// after the uint32 length for standard clients; keep simple: run interactive shell.
+				if req.WantReply {
+					req.Reply(true, nil)
+				}
+				if len(req.Payload) >= 4 {
+					// skip 4-byte length prefix when present
+					n := int(req.Payload[0])<<24 | int(req.Payload[1])<<16 | int(req.Payload[2])<<8 | int(req.Payload[3])
+					if n > 0 && 4+n <= len(req.Payload) {
+						execPayload = string(req.Payload[4 : 4+n])
+					} else {
+						execPayload = string(req.Payload)
+					}
+				}
+				close(ready)
+				return
+			case "pty-req", "env", "window-change":
+				if req.WantReply {
+					req.Reply(true, nil)
+				}
 			default:
 				if req.WantReply {
 					req.Reply(false, nil)
@@ -202,7 +234,14 @@ func handleSSHSession(channel gossh.Channel, requests <-chan *gossh.Request) {
 		}
 	}()
 
-	<-shellRequested
+	<-ready
+
+	if execPayload != "" {
+		home := getEnv("HOME", defaultHome)
+		cmd = exec.Command("/bin/sh", "-lc", execPayload)
+		cmd.Dir = home
+		cmd.Env = shellEnv(home)
+	}
 
 	cmd.Stdin = channel
 	cmd.Stdout = channel
@@ -213,38 +252,74 @@ func handleSSHSession(channel gossh.Channel, requests <-chan *gossh.Request) {
 		return
 	}
 
-	cmd.Wait()
+	_ = cmd.Wait()
 }
 
-func generateHostKey() (gossh.Signer, error) {
-	// Generate RSA private key
+func loadOrCreateHostKey(path string) (gossh.Signer, error) {
+	if data, err := os.ReadFile(path); err == nil {
+		signer, err := gossh.ParsePrivateKey(data)
+		if err != nil {
+			return nil, fmt.Errorf("parse host key %s: %w", path, err)
+		}
+		log.Printf("loaded host key from %s", path)
+		return signer, nil
+	}
+
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}
 
-	// Encode to PEM format
-	privateKeyPEM := &pem.Block{
+	block := &pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 	}
+	pemBytes := pem.EncodeToMemory(block)
 
-	// Parse PEM block to get signer
-	signer, err := gossh.ParsePrivateKey(pem.EncodeToMemory(privateKeyPEM))
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		return nil, fmt.Errorf("write host key %s: %w", path, err)
+	}
+	log.Printf("generated host key at %s", path)
 
-	return signer, nil
+	return gossh.ParsePrivateKey(pemBytes)
 }
 
 func shellCommand() *exec.Cmd {
+	home := getEnv("HOME", defaultHome)
+	_ = os.MkdirAll(home, 0o755)
+
+	var cmd *exec.Cmd
 	for _, sh := range []string{"/bin/bash", "/bin/sh", "/bin/ash"} {
 		if path, err := exec.LookPath(sh); err == nil {
-			return exec.Command(path, "-i")
+			// login-ish interactive shell so rc files under HOME are picked up
+			if filepath.Base(path) == "bash" {
+				cmd = exec.Command(path, "-il")
+			} else {
+				cmd = exec.Command(path, "-i")
+			}
+			break
 		}
 	}
-	return exec.Command("/bin/sh", "-i")
+	if cmd == nil {
+		cmd = exec.Command("/bin/sh", "-i")
+	}
+
+	cmd.Dir = home
+	cmd.Env = shellEnv(home)
+	return cmd
+}
+
+func shellEnv(home string) []string {
+	env := os.Environ()
+	env = append(env,
+		"HOME="+home,
+		"PWD="+home,
+		"TERM=xterm-256color",
+	)
+	return env
 }
 
 func getEnv(key, defaultVal string) string {
@@ -258,18 +333,19 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `DexShell - Simple remote shell tool untuk Docker containers
 
 Penggunaan:
-  dexshell reverse <host:port>   Connect ke listener (reverse shell)
-  dexshell bind    <port>        Listen untuk koneksi masuk (bind shell)
-  dexshell ssh                   Jalankan SSH server (dengan config dari .env)
+  dexshell                Jalankan SSH server (default)
+  dexshell ssh            Jalankan SSH server
+  dexshell reverse <host:port>
+  dexshell bind <port>
 
-Environment variables (untuk SSH):
-  SSH_PASSWORD    Password login (default: changeme)
-  SSH_PORT        Port SSH (default: 2222)
-  SSH_USER        Username login (default: root)
+Environment:
+  SSH_PASSWORD   Password login (default: changeme)
+  SSH_PORT       Port SSH (default: PORT atau 4444)
+  SSH_USER       Username (default: root)
+  HOME           Home/session dir (default: /app, mount volume di sini)
 
 Contoh:
-  dexshell reverse 10.0.0.5:4444
-  dexshell bind 4444
-  docker run -e SSH_PASSWORD=mypassword -p 2222:2222 dexshell ./dexshell ssh
+  dexshell
+  ssh -p 4444 root@vps.sunwa.web.id
 `)
 }
