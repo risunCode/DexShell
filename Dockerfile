@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine
+FROM golang:1.25-alpine
 
 # Install runtime utilities
 RUN apk add --no-cache \
@@ -38,9 +38,9 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download
+COPY vendor ./vendor
 COPY . ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o dexshell .
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dexshell .
 RUN chmod +x dexshell
 EXPOSE 4444 2222
 CMD ["./dexshell", "bind", "4444"]
