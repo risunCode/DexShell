@@ -13,6 +13,9 @@ FROM debian:trixie-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/app \
     TERM=xterm-256color \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
     PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # apt-get update is required during image build (package index is not cached in slim).
@@ -22,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     git \
+    xz-utils \
     openssh-client \
     netcat-openbsd \
     iproute2 \
@@ -52,6 +56,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     locales \
     speedtest-cli \
     dialog \
+    && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
+    && locale-gen en_US.UTF-8 \
+    && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
 # Optional: fastfetch (+ neofetch alias). Skip if package missing.
