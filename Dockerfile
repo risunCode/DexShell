@@ -1,5 +1,5 @@
-# DexShell — SSH/SFTP shell on Debian 13 with /app volume as persistent home.
-# App binary stays outside /app so Railway volume mounts cannot hide it.
+# DexShell — SSH/SFTP on Debian 13, userland bound to /app volume.
+# Binary stays outside /app so Railway volume mounts cannot hide it.
 FROM golang:1.25-trixie AS builder
 
 WORKDIR /src
@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     LANGUAGE=en_US:en \
-    PATH="/app/bin:/app/.local/bin:/app/.bun/bin:/app/.npm-global/bin:/app/.cargo/bin:/app/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    PATH="/app/bin:/app/.local/bin:/app/.bun/bin:/app/.npm-global/bin:/app/.cargo/bin:/app/go/bin:/app/.hermes/bin:/app/.hermes/hermes-agent/.venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
     XDG_CONFIG_HOME=/app/.config \
     XDG_CACHE_HOME=/app/.cache \
     XDG_DATA_HOME=/app/.local/share \
@@ -24,13 +24,23 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HERMES_HOME=/app/.hermes \
     BUN_INSTALL=/app/.bun \
     npm_config_prefix=/app/.npm-global \
+    NPM_CONFIG_PREFIX=/app/.npm-global \
+    NPM_CONFIG_CACHE=/app/.cache/npm \
     CARGO_HOME=/app/.cargo \
     RUSTUP_HOME=/app/.rustup \
     GOPATH=/app/go \
+    GOBIN=/app/go/bin \
     GOCACHE=/app/.cache/go-build \
     PYTHONUSERBASE=/app/.local \
     PIP_USER=1 \
     UV_LINK_MODE=copy \
+    UV_CACHE_DIR=/app/.cache/uv \
+    UV_PYTHON_INSTALL_DIR=/app/.local/share/uv/python \
+    PNPM_HOME=/app/.local/share/pnpm \
+    CLAUDE_CONFIG_DIR=/app/.config/claude \
+    CODEX_HOME=/app/.codex \
+    OPENCODE_CONFIG_DIR=/app/.config/opencode \
+    KILO_HOME=/app/.kilo \
     DEXSHELL_SEED=/opt/dexshell/home-seed
 
 # Base tools + coding-agent installer deps.
@@ -78,6 +88,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     file \
     gnupg \
+    fontconfig \
     && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
     && locale-gen en_US.UTF-8 \
     && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
@@ -90,7 +101,7 @@ RUN apt-get update \
         || echo "fastfetch not available, skip") \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js (for npm -g agent CLIs). Prefer NodeSource 22, fallback to distro nodejs/npm.
+# Node.js 22 (npm path for agent CLIs). Fallback to distro nodejs/npm.
 RUN apt-get update \
     && (curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
         && apt-get install -y --no-install-recommends nodejs \
@@ -99,17 +110,17 @@ RUN apt-get update \
     && node -v \
     && npm -v
 
-# Bun runtime (system binary; user global packages still go to /app/.bun via BUN_INSTALL).
-RUN curl -fsSL https://bun.sh/install | bash \
-    && if [ -x /root/.bun/bin/bun ]; then install -m 755 /root/.bun/bin/bun /usr/local/bin/bun; fi \
-    && if [ -x /root/.bun/bin/bunx ]; then install -m 755 /root/.bun/bin/bunx /usr/local/bin/bunx; fi \
-    && rm -rf /root/.bun \
-    && bun --version
+# Bun: system binary always available; globals still install to $BUN_INSTALL (/app/.bun).
+RUN set -eux; \
+    curl -fsSL https://bun.sh/install | bash; \
+    if [ -x /root/.bun/bin/bun ]; then install -m 755 /root/.bun/bin/bun /usr/local/bin/bun; fi; \
+    if [ -x /root/.bun/bin/bunx ]; then install -m 755 /root/.bun/bin/bunx /usr/local/bin/bunx; fi; \
+    rm -rf /root/.bun; \
+    command -v bun; \
+    bun --version
 
-# JetBrainsMono Nerd Font (for TUI glyph/icon support).
-# Note: SSH clients still need a Nerd Font selected on the *client* side to render glyphs.
-RUN apt-get update && apt-get install -y --no-install-recommends fontconfig \
-    && mkdir -p /usr/local/share/fonts/truetype/jetbrainsmono-nerd \
+# JetBrainsMono Nerd Font + default monospace via fontconfig.
+RUN mkdir -p /usr/local/share/fonts/truetype/jetbrainsmono-nerd \
     && curl -fsSL -o /tmp/JetBrainsMono.zip \
          https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip \
     && unzip -qo /tmp/JetBrainsMono.zip -d /tmp/JetBrainsMono \
@@ -131,8 +142,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends fontconfig \
          '</fontconfig>' \
          > /etc/fonts/conf.d/59-dexshell-jetbrainsmono-nerd.conf \
     && fc-cache -f \
-    && (fc-list | grep -qi 'JetBrainsMono' || fc-list | grep -qi 'JetBrains') \
-    && rm -rf /var/lib/apt/lists/*
+    && (fc-list | grep -qi 'JetBrainsMono' || fc-list | grep -qi 'JetBrains')
+
+# Volume-bound profile + helpers (hermes wrapper, installers, path defaults).
+COPY rootfs/ /
+RUN mkdir -p /opt/dexshell/wrappers \
+    && cp -a /usr/local/bin/hermes /opt/dexshell/wrappers/hermes \
+    && chmod 755 /usr/local/bin/hermes \
+                 /opt/dexshell/wrappers/hermes \
+                 /usr/local/bin/dexshell-install-hermes \
+                 /usr/local/bin/dexshell-volume-ready \
+    && chmod 644 /etc/profile.d/dexshell-volume.sh
 
 # Seed files for first boot onto the volume (copied by entrypoint if missing).
 COPY home-seed/ /opt/dexshell/home-seed/
