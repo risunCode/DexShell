@@ -8,7 +8,7 @@ RUN apk add --no-cache \
     iproute2 \
     iputils-ping \
     traceroute \
-    dnsutils \
+    bind-tools \
     fastfetch \
     htop \
     btop \
@@ -20,7 +20,7 @@ RUN apk add --no-cache \
     bat \
     eza \
     ripgrep \
-    fd-find \
+    fd \
     fzf \
     tree \
     nmap \
@@ -34,7 +34,7 @@ RUN apk add --no-cache \
     rsync \
     python3 \
     py3-pip \
-    openssh-server
+    openssh
 
 WORKDIR /app
 COPY go.mod go.sum ./
