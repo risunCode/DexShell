@@ -1,0 +1,43 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "auto",
+    "padding": { "top": 1, "left": 2, "right": 2 }
+  },
+  "display": {
+    "separator": "  "
+  },
+  "modules": [
+    "title",
+    "separator",
+    "os",
+    "host",
+    "kernel",
+    "uptime",
+    "packages",
+    "shell",
+    "terminal",
+    "cpu",
+    {
+      "type": "command",
+      "key": "Memory (cgroup)",
+      "text": "python3 - <<'PY'\nfrom pathlib import Path\n\ndef read(p):\n    try:\n        return Path(p).read_text().strip()\n    except Exception:\n        return None\n\ndef parse(v):\n    if v is None or v in ('', 'max'):\n        return None\n    try:\n        return int(v)\n    except Exception:\n        return None\n\ndef human(n):\n    u = ['B','KiB','MiB','GiB','TiB']\n    f = float(n)\n    i = 0\n    while f >= 1024 and i < len(u)-1:\n        f /= 1024\n        i += 1\n    return f\"{f:.2f} {u[i]}\"\n\nbase = Path('/sys/fs/cgroup')\ncur = parse(read(base/'memory.current')) or parse(read(base/'memory/memory.usage_in_bytes'))\nmaxv = parse(read(base/'memory.max')) or parse(read(base/'memory/memory.limit_in_bytes'))\n\nif cur is None:\n    print('n/a')\nelif maxv is None:\n    print(f\"{human(cur)} used (no hard limit)\")\nelse:\n    pct = (cur / maxv) * 100 if maxv else 0\n    print(f\"{human(cur)} / {human(maxv)} ({pct:.0f}%)\")\nPY"
+    },
+    {
+      "type": "disk",
+      "key": "Disk (/)",
+      "folders": ["/"],
+      "showExternal": false,
+      "showSubvolumes": false
+    },
+    {
+      "type": "disk",
+      "key": "Disk (/app volume)",
+      "folders": ["/app"],
+      "showExternal": false,
+      "showSubvolumes": false
+    },
+    "localip",
+    "locale"
+  ]
+}

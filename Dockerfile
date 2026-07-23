@@ -1,5 +1,5 @@
-# DexShell — simple SSH shell on Debian 13 (trixie)
-# Binary outside /app so Railway volume on /app won't hide it.
+# DexShell — SSH/SFTP shell on Debian 13 with /app volume as persistent home.
+# App binary stays outside /app so Railway volume mounts cannot hide it.
 FROM golang:1.25-trixie AS builder
 
 WORKDIR /src
@@ -16,9 +16,24 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     LANGUAGE=en_US:en \
-    PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+    PATH="/app/bin:/app/.local/bin:/app/.bun/bin:/app/.npm-global/bin:/app/.cargo/bin:/app/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    XDG_CONFIG_HOME=/app/.config \
+    XDG_CACHE_HOME=/app/.cache \
+    XDG_DATA_HOME=/app/.local/share \
+    XDG_STATE_HOME=/app/.local/state \
+    HERMES_HOME=/app/.hermes \
+    BUN_INSTALL=/app/.bun \
+    npm_config_prefix=/app/.npm-global \
+    CARGO_HOME=/app/.cargo \
+    RUSTUP_HOME=/app/.rustup \
+    GOPATH=/app/go \
+    GOCACHE=/app/.cache/go-build \
+    PYTHONUSERBASE=/app/.local \
+    PIP_USER=1 \
+    UV_LINK_MODE=copy \
+    DEXSHELL_SEED=/opt/dexshell/home-seed
 
-# apt-get update is required during image build (package index is not cached in slim).
+# Base tools + coding-agent installer deps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
@@ -52,27 +67,56 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rsync \
     python3 \
     python3-pip \
+    python3-venv \
     sudo \
     locales \
     speedtest-cli \
     dialog \
     ripgrep \
     ffmpeg \
+    build-essential \
+    pkg-config \
+    file \
+    gnupg \
     && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
     && locale-gen en_US.UTF-8 \
     && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
-# Optional: fastfetch (+ neofetch alias). Skip if package missing.
+# Optional eyecandy.
 RUN apt-get update \
     && (apt-get install -y --no-install-recommends fastfetch \
         && ln -sf "$(command -v fastfetch)" /usr/local/bin/neofetch \
         || echo "fastfetch not available, skip") \
     && rm -rf /var/lib/apt/lists/*
 
+# Node.js (for npm -g agent CLIs). Prefer NodeSource 22, fallback to distro nodejs/npm.
+RUN apt-get update \
+    && (curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+        && apt-get install -y --no-install-recommends nodejs \
+        || apt-get install -y --no-install-recommends nodejs npm) \
+    && rm -rf /var/lib/apt/lists/* \
+    && node -v \
+    && npm -v
+
+# Bun runtime (system binary; user global packages still go to /app/.bun via BUN_INSTALL).
+RUN curl -fsSL https://bun.sh/install | bash \
+    && if [ -x /root/.bun/bin/bun ]; then install -m 755 /root/.bun/bin/bun /usr/local/bin/bun; fi \
+    && if [ -x /root/.bun/bin/bunx ]; then install -m 755 /root/.bun/bin/bunx /usr/local/bin/bunx; fi \
+    && rm -rf /root/.bun \
+    && bun --version
+
+# Seed files for first boot onto the volume (copied by entrypoint if missing).
+COPY home-seed/ /opt/dexshell/home-seed/
+COPY entrypoint.sh /usr/local/bin/dexshell-entrypoint
+RUN chmod 755 /usr/local/bin/dexshell-entrypoint \
+    && find /opt/dexshell/home-seed -type f -exec chmod 644 {} \;
+
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
-RUN chmod 755 /usr/local/bin/dexshell && mkdir -p /app
+RUN chmod 755 /usr/local/bin/dexshell \
+    && mkdir -p /app
 
 WORKDIR /app
 EXPOSE 4444
+ENTRYPOINT ["/usr/local/bin/dexshell-entrypoint"]
 CMD ["/usr/local/bin/dexshell", "ssh"]
