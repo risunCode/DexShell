@@ -11,9 +11,4 @@ bin/
 # CodeGraph
 .codegraph/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+dexshell

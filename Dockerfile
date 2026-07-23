@@ -1,17 +1,17 @@
-FROM debian:latest
+# ---------- Builder stage ----------
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . ./
+RUN CGO_ENABLED=0 GOOS=linux go build -o /dexshell .
 
-# Install everything including Hermes Agent requirements
+# ---------- Runtime stage ----------
+FROM debian:stable-slim
+# Install utilities required at runtime
 RUN apt update && apt install -y \
-    golang-go \
-    git \
-    build-essential \
-    ca-certificates \
-    wget \
-    xz-utils \
-    ffmpeg \
     bash \
     curl \
-    wget \
     netcat-openbsd \
     iproute2 \
     iputils-ping \
@@ -40,17 +40,13 @@ RUN apt update && apt install -y \
     zip \
     unzip \
     rsync \
-    git \
     python3 \
     python3-pip \
     openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY go.mod go.sum main.go ./
-
-RUN CGO_ENABLED=0 GOOS=linux go build -o dexshell .
-
+COPY --from=builder /dexshell /app/dexshell
+RUN chmod +x /app/dexshell
 EXPOSE 4444 2222
-
-CMD ["./dexshell", "bind", "4444"]
+CMD ["/app/dexshell", "bind", "4444"]
