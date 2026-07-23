@@ -1,9 +1,8 @@
 # Build stage
-FROM debian:trixie-slim AS builder
+FROM debian:latest AS builder
 
 # Install build dependencies
-RUN apt update && apt upgrade -y && \
-    apt install -y \
+RUN apt update && apt install -y \
     golang-go \
     git \
     build-essential \
@@ -20,11 +19,10 @@ COPY vendor/ vendor/
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dexshell .
 
 # Runtime stage
-FROM debian:trixie-slim
+FROM debian:latest
 
 # Install runtime tools and "pamer" tools
-RUN apt update && apt upgrade -y && \
-    apt install -y \
+RUN apt update && apt install -y \
     bash \
     curl \
     wget \
