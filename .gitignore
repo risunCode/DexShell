@@ -1,21 +1,18 @@
-# Deployment secrets dan runtime workspace
-.env
-workspace/*
-!workspace/.gitkeep
-
-# Binary hasil build lokal (hanya di root)
-/dexshell
-/dexshell.exe
-/dexshell-linux-*
-
-# Go
-*.exe~
+# Binaries
+bin/
+*.exe
 *.dll
 *.so
 *.dylib
-*.test
-*.out
-vendor/
+
+# Environment variables (sensitive)
+.env
+
+# Go specific
+go.sum
+
+# CodeGraph
+.codegraph/
 
 # IDE
 .vscode/
@@ -23,7 +20,3 @@ vendor/
 *.swp
 *.swo
 *~
-
-# OS
-.DS_Store
-Thumbs.db

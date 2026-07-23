@@ -33,7 +33,7 @@ RUN apt update && apt upgrade -y && \
     traceroute \
     dnsutils \
     # System info & monitoring (pamer tools)
-    neofetch \
+    fastfetch \
     htop \
     btop \
     glances \
@@ -64,13 +64,19 @@ RUN apt update && apt upgrade -y && \
     git \
     python3 \
     python3-pip \
+    # SSH server
+    openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /build/dexshell .
+COPY .env.example .env
 
-# Expose default shell port
-EXPOSE 4444
+# Volume for app data (container still has root access to host)
+VOLUME ["/app"]
+
+# Expose default shell port and SSH port
+EXPOSE 4444 2222
 
 # Default to bind shell on port 4444
 CMD ["./dexshell", "bind", "4444"]
