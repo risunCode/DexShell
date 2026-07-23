@@ -38,6 +38,11 @@ export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 export OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 export KILO_HOME="${KILO_HOME:-$HOME/.kilo}"
 
+# Scratch/temp for package installs — never fill the persistent volume by default.
+export TMPDIR="${TMPDIR:-/tmp}"
+export TMP="${TMP:-/tmp}"
+export TEMP="${TEMP:-/tmp}"
+
 # Prefer volume bins first, then system
 _dexshell_path_prefix="$HOME/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/go/bin:$PNPM_HOME:$HOME/.gem/bin:$HOME/.hermes/hermes-agent/.venv/bin:$HOME/.hermes/bin"
 case ":${PATH:-}:" in

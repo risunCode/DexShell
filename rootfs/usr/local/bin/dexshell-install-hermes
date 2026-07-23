@@ -7,8 +7,13 @@ export HOME="$HOME_DIR"
 export HERMES_HOME="${HERMES_HOME:-$HOME_DIR/.hermes}"
 export PATH="$HOME_DIR/bin:$HOME_DIR/.local/bin:/usr/local/bin:/usr/local/share/uv/bin:${PATH:-}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-$HOME_DIR/.cache/uv}"
+# Keep heavy download/build caches in /tmp during install, then keep only final tree on volume.
+export TMPDIR="${TMPDIR:-/tmp}"
+export TMP="${TMP:-/tmp}"
+export TEMP="${TEMP:-/tmp}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$HOME_DIR/.local/share/uv/python}"
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-/tmp/npm-cache}"
 
 mkdir -p \
   "$HOME_DIR/bin" \
@@ -16,8 +21,8 @@ mkdir -p \
   "$HERMES_HOME" \
   "$HERMES_HOME/logs" \
   "$HERMES_HOME/bin" \
-  "$HOME_DIR/.cache/uv" \
-  "$HOME_DIR/.local/share/uv/python"
+  "$HOME_DIR/.local/share/uv/python" \
+  /tmp/uv-cache /tmp/npm-cache
 
 echo "[dexshell] Installing Hermes into volume:"
 echo "  HERMES_HOME=$HERMES_HOME"
@@ -87,6 +92,10 @@ if [[ -x /usr/local/bin/hermes ]] && ! grep -q 'Volume-first Hermes launcher' /u
     install -m 755 /opt/dexshell/wrappers/hermes /usr/local/bin/hermes
   fi
 fi
+
+# Drop install caches so volume/tmp don't stay bloated.
+rm -rf /tmp/uv-cache /tmp/npm-cache /tmp/hermes-install* /tmp/bun-install 2>/dev/null || true
+find /tmp -maxdepth 1 -type f -name 'hermes*' -delete 2>/dev/null || true
 
 hash -r || true
 echo "[dexshell] Done."

@@ -59,6 +59,11 @@ export CODEX_HOME="${CODEX_HOME:-$HOME_DIR/.codex}"
 export OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME_DIR/.config/opencode}"
 export KILO_HOME="${KILO_HOME:-$HOME_DIR/.kilo}"
 
+# Installer/build scratch always goes to container tmp, not the persistent volume.
+export TMPDIR="${TMPDIR:-/tmp}"
+export TMP="${TMP:-/tmp}"
+export TEMP="${TEMP:-/tmp}"
+
 export PATH="$HOME_DIR/bin:$HOME_DIR/.local/bin:$HOME_DIR/.bun/bin:$HOME_DIR/.npm-global/bin:$HOME_DIR/.cargo/bin:$HOME_DIR/go/bin:$HOME_DIR/.hermes/bin:$HOME_DIR/.hermes/hermes-agent/.venv/bin:$PNPM_HOME:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Soft-link common volume tools into $HOME/bin when present.
