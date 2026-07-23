@@ -12,10 +12,12 @@ RUN apt update && apt upgrade -y && \
 
 WORKDIR /build
 COPY go.mod .
+COPY go.sum .
 COPY main.go .
+COPY vendor/ vendor/
 
-# Build DexShell
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o dexshell .
+# Build DexShell with vendor mode
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o dexshell .
 
 # Runtime stage
 FROM debian:trixie-slim
