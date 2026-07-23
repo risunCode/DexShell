@@ -45,9 +45,9 @@ RUN apt update && apt install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY go.mod go.sum main.go vendor/ ./
+COPY go.mod go.sum main.go ./
 
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dexshell .
+RUN CGO_ENABLED=0 GOOS=linux go build -o dexshell .
 
 EXPOSE 4444 2222
 
