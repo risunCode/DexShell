@@ -1,12 +1,14 @@
 FROM debian:latest
 
-# Install everything in one stage
+# Install everything including Hermes Agent requirements
 RUN apt update && apt install -y \
     golang-go \
     git \
     build-essential \
     ca-certificates \
     wget \
+    xz-utils \
+    ffmpeg \
     bash \
     curl \
     wget \
