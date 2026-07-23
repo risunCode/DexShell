@@ -18,6 +18,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/joho/godotenv"
+	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -169,7 +170,7 @@ func sshServer() error {
 	}
 	defer ln.Close()
 
-	log.Printf("SSH on :%s user=%s home=%s", port, user, home)
+	log.Printf("SSH+SFTP on :%s user=%s home=%s", port, user, home)
 
 	for {
 		conn, err := ln.Accept()
@@ -194,15 +195,16 @@ func handleSSH(conn net.Conn, cfg *gossh.ServerConfig) {
 	go gossh.DiscardRequests(reqs)
 
 	for nch := range chans {
-		if nch.ChannelType() != "session" {
+		switch nch.ChannelType() {
+		case "session":
+			ch, requests, err := nch.Accept()
+			if err != nil {
+				continue
+			}
+			go handleSession(ch, requests)
+		default:
 			nch.Reject(gossh.UnknownChannelType, "only session")
-			continue
 		}
-		ch, requests, err := nch.Accept()
-		if err != nil {
-			continue
-		}
-		go handleSession(ch, requests)
 	}
 }
 
@@ -213,7 +215,8 @@ func handleSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 		ptyReq  *ptyRequest
 		wantTTY bool
 		once    sync.Once
-		start   = make(chan string, 1) // "" = shell, else exec command
+		// kind: "shell" | "exec" | "sftp"
+		start = make(chan sessionStart, 1)
 	)
 
 	go func() {
@@ -233,7 +236,6 @@ func handleSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 					w := binary.BigEndian.Uint32(req.Payload[0:4])
 					h := binary.BigEndian.Uint32(req.Payload[4:8])
 					ptyReq.cols, ptyReq.rows = w, h
-					// resize applied after pty starts via channel below if needed
 				}
 				if req.WantReply {
 					_ = req.Reply(true, nil)
@@ -246,7 +248,7 @@ func handleSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 				if req.WantReply {
 					_ = req.Reply(true, nil)
 				}
-				once.Do(func() { start <- "" })
+				once.Do(func() { start <- sessionStart{kind: "shell"} })
 			case "exec":
 				cmd := ""
 				if len(req.Payload) >= 4 {
@@ -258,18 +260,69 @@ func handleSession(ch gossh.Channel, requests <-chan *gossh.Request) {
 				if req.WantReply {
 					_ = req.Reply(true, nil)
 				}
-				once.Do(func() { start <- cmd })
+				once.Do(func() { start <- sessionStart{kind: "exec", cmd: cmd} })
+			case "subsystem":
+				name := ""
+				if len(req.Payload) >= 4 {
+					n := binary.BigEndian.Uint32(req.Payload[0:4])
+					if int(4+n) <= len(req.Payload) {
+						name = string(req.Payload[4 : 4+n])
+					}
+				}
+				if name == "sftp" {
+					if req.WantReply {
+						_ = req.Reply(true, nil)
+					}
+					once.Do(func() { start <- sessionStart{kind: "sftp"} })
+				} else {
+					if req.WantReply {
+						_ = req.Reply(false, nil)
+					}
+				}
 			default:
 				if req.WantReply {
 					_ = req.Reply(false, nil)
 				}
 			}
 		}
-		once.Do(func() { start <- "" })
+		once.Do(func() { start <- sessionStart{kind: "shell"} })
 	}()
 
-	cmdStr := <-start
-	runSession(ch, cmdStr, wantTTY, ptyReq)
+	st := <-start
+	switch st.kind {
+	case "sftp":
+		runSFTP(ch)
+	case "exec":
+		runSession(ch, st.cmd, wantTTY, ptyReq)
+	default:
+		runSession(ch, "", wantTTY, ptyReq)
+	}
+}
+
+type sessionStart struct {
+	kind string
+	cmd  string
+}
+
+func runSFTP(ch gossh.Channel) {
+	home := envOr("HOME", "/app")
+	_ = os.MkdirAll(home, 0o755)
+
+	// Root SFTP at HOME (/app volume) so uploads land on persistent storage.
+	server, err := sftp.NewServer(
+		ch,
+		sftp.WithServerWorkingDirectory(home),
+	)
+	if err != nil {
+		log.Printf("sftp server: %v", err)
+		return
+	}
+	defer server.Close()
+
+	log.Printf("sftp session root=%s", home)
+	if err := server.Serve(); err != nil && err != io.EOF {
+		log.Printf("sftp serve: %v", err)
+	}
 }
 
 type ptyRequest struct {
@@ -339,7 +392,6 @@ func runSession(ch gossh.Channel, cmdStr string, wantTTY bool, pr *ptyRequest) {
 			_ = setWinsize(ptmx, pr.cols, pr.rows)
 		}
 
-		// keep resizing if client sends window-change — best-effort via process group
 		go func() {
 			_, _ = io.Copy(ptmx, ch)
 			_ = ptmx.Close()
