@@ -15,6 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TERM=xterm-256color \
     PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Core packages only (must exist on Debian 13).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
@@ -47,8 +48,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     sudo \
-    neofetch \
     locales \
+    && rm -rf /var/lib/apt/lists/*
+
+# Optional eyecandy: neofetch is gone on Trixie; fastfetch may exist.
+RUN apt-get update \
+    && (apt-get install -y --no-install-recommends fastfetch \
+        && ln -sf "$(command -v fastfetch)" /usr/local/bin/neofetch \
+        || echo "fastfetch not available, skip") \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
