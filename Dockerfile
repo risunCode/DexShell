@@ -1,17 +1,7 @@
-# ---------- Builder stage ----------
-# ---------- Builder stage ----------
-FROM golang:1.25-alpine AS builder
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . ./
-# Build static binary inside /src
-RUN CGO_ENABLED=0 GOOS=linux go build -o dexshell .
+FROM golang:1.22-alpine
 
-# ---------- Runtime stage ----------
-FROM debian:stable-slim
-# Install utilities required at runtime
-RUN apt update && apt install -y \
+# Install runtime utilities
+RUN apk add --no-cache \
     bash \
     curl \
     netcat-openbsd \
@@ -43,13 +33,14 @@ RUN apt update && apt install -y \
     unzip \
     rsync \
     python3 \
-    python3-pip \
-    openssh-server \
-    && rm -rf /var/lib/apt/lists/*
+    py3-pip \
+    openssh-server
 
 WORKDIR /app
-# Copy the built binary from builder
-COPY --from=builder /src/dexshell /app/dexshell
-RUN chmod +x /app/dexshell
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . ./
+RUN CGO_ENABLED=0 GOOS=linux go build -o dexshell .
+RUN chmod +x dexshell
 EXPOSE 4444 2222
-CMD ["/app/dexshell", "bind", "4444"]
+CMD ["./dexshell", "bind", "4444"]
