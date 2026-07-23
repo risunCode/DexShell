@@ -1,14 +1,6 @@
 # DexShell
 
-```
-██╗  ██╗██╗ ██████╗██╗  ██╗██╗███╗   ██╗ ██████╗ 
-██║ ██╔╝██║██╔════╝██║ ██╔╝██║████╗  ██║██╔═══██╗
-█████╔╝ ██║██║     █████╔╝ ██║██╔██╗ ██║██║   ██║
-██╔═██╗ ██║██║     ██╔═██╗ ██║██║╚██╗██║██║   ██║
-██║  ██╗██║╚██████╗██║  ██╗██║██║ ╚████║╚██████╔╝
-╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ 
-              Simple Remote Shell Tool
-```
+DEXSHELL - Simple Remote Shell Tool
 
 DexShell is a simple remote shell tool for Docker containers with reverse shell, bind shell, and SSH server capabilities.
 
