@@ -1,31 +1,12 @@
-# Build stage
-FROM debian:latest AS builder
+FROM debian:latest
 
-# Install build dependencies
+# Install everything in one stage
 RUN apt update && apt install -y \
     golang-go \
     git \
     build-essential \
     ca-certificates \
-    wget
-
-WORKDIR /build
-COPY go.mod .
-COPY go.sum .
-COPY main.go .
-COPY vendor/ vendor/
-
-# Build DexShell with vendor mode
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dexshell .
-
-# Verify binary exists
-RUN test -f /build/dexshell && echo "Binary exists"
-
-# Runtime stage
-FROM debian:latest
-
-# Install runtime tools and "pamer" tools
-RUN apt update && apt install -y \
+    wget \
     bash \
     curl \
     wget \
@@ -64,13 +45,10 @@ RUN apt update && apt install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /build/dexshell /app/dexshell
+COPY go.mod go.sum main.go vendor/ ./
 
-RUN chmod +x /app/dexshell
-
-# Verify binary exists in runtime
-RUN test -f /app/dexshell && echo "Binary exists in /app" && ls -la /app/
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o dexshell .
 
 EXPOSE 4444 2222
 
-CMD ["/app/dexshell", "bind", "4444"]
+CMD ["./dexshell", "bind", "4444"]
