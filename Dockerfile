@@ -19,6 +19,9 @@ COPY vendor/ vendor/
 # Build DexShell with vendor mode
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o dexshell .
 
+# Verify the binary was created
+RUN ls -la /build/dexshell && /build/dexshell --help || true
+
 # Runtime stage
 FROM debian:trixie-slim
 
@@ -71,11 +74,17 @@ RUN apt update && apt upgrade -y && \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /build/dexshell .
-COPY .env.example .env
+COPY --from=builder /build/dexshell /app/dexshell
+COPY .env.example /app/.env
+
+# Make the binary executable
+RUN chmod +x /app/dexshell
+
+# Verify the binary exists in runtime
+RUN ls -la /app/dexshell
 
 # Expose default shell port and SSH port
 EXPOSE 4444 2222
 
 # Default to bind shell on port 4444
-CMD ["./dexshell", "bind", "4444"]
+CMD ["/app/dexshell", "bind", "4444"]
