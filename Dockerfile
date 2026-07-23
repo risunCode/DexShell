@@ -75,7 +75,6 @@ RUN apt update && apt upgrade -y && \
 
 WORKDIR /app
 COPY --from=builder /build/dexshell /app/dexshell
-COPY .env.example /app/.env
 
 # Make the binary executable
 RUN chmod +x /app/dexshell
