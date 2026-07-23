@@ -72,9 +72,6 @@ WORKDIR /app
 COPY --from=builder /build/dexshell .
 COPY .env.example .env
 
-# Volume for app data (container still has root access to host)
-VOLUME ["/app"]
-
 # Expose default shell port and SSH port
 EXPOSE 4444 2222
 
