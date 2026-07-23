@@ -1,53 +1,59 @@
-# DexShell — SSH-first image.
-# Binary lives OUTSIDE /app so Railway volume mounts on /app cannot hide it.
-# /app is the persistent home (history, files, host key).
-FROM golang:1.25-alpine AS builder
+# DexShell — simple SSH shell on Debian 13 (trixie)
+# Binary outside /app so Railway volume on /app won't hide it.
+FROM golang:1.25-trixie AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
-COPY vendor ./vendor
+RUN go mod download
 COPY main.go ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/dexshell . \
-    && test -x /out/dexshell
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/dexshell .
 
-FROM alpine:3.21
+FROM debian:trixie-slim
 
-RUN apk add --no-cache \
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/app \
+    TERM=xterm-256color \
+    PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
+    wget \
+    git \
+    openssh-client \
     netcat-openbsd \
     iproute2 \
-    iputils \
-    bind-tools \
-    busybox-extras \
+    iputils-ping \
+    dnsutils \
+    traceroute \
+    net-tools \
+    procps \
+    psmisc \
     htop \
     tmux \
     vim \
     nano \
+    less \
     jq \
     tree \
     nmap \
     tcpdump \
-    openssh \
+    strace \
+    lsof \
+    zip \
+    unzip \
+    rsync \
     python3 \
-    && rm -rf /var/cache/apk/*
+    python3-pip \
+    sudo \
+    neofetch \
+    locales \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
-RUN chmod 755 /usr/local/bin/dexshell \
-    && test -x /usr/local/bin/dexshell
+RUN chmod 755 /usr/local/bin/dexshell && mkdir -p /app
 
-# Persistent session/data dir (Railway volume should mount here)
 WORKDIR /app
-RUN mkdir -p /app
-
-ENV PATH="/usr/local/bin:${PATH}" \
-    HOME=/app \
-    SSH_USER=root \
-    SSH_PORT=4444 \
-    SSH_PASSWORD=changeme
-
 EXPOSE 4444
-
-# Absolute path + SSH-only
 CMD ["/usr/local/bin/dexshell", "ssh"]

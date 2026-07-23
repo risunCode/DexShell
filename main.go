@@ -1,351 +1,417 @@
-// DexShell - Simple remote shell tool untuk Docker containers.
+// DexShell - simple SSH shell for containers.
 package main
 
 import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
+	"github.com/creack/pty"
+	"github.com/joho/godotenv"
 	gossh "golang.org/x/crypto/ssh"
 )
 
-const (
-	defaultHome    = "/app"
-	hostKeyRelPath = ".dexshell/ssh_host_rsa_key"
-)
-
 func main() {
-	// Default mode: SSH (deploy target). Other modes remain for local use.
+	loadEnv()
+
 	mode := "ssh"
 	if len(os.Args) >= 2 {
 		mode = os.Args[1]
 	}
 
 	switch mode {
-	case "reverse":
-		if len(os.Args) < 3 {
-			fmt.Fprintf(os.Stderr, "Usage: dexshell reverse <host:port>\n")
-			os.Exit(1)
-		}
-		if err := reverseShell(os.Args[2]); err != nil {
-			fmt.Fprintf(os.Stderr, "reverse shell error: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "bind":
-		if len(os.Args) < 3 {
-			fmt.Fprintf(os.Stderr, "Usage: dexshell bind <port>\n")
-			os.Exit(1)
-		}
-		if err := bindShell(os.Args[2]); err != nil {
-			fmt.Fprintf(os.Stderr, "bind shell error: %v\n", err)
-			os.Exit(1)
-		}
-
 	case "ssh":
 		if err := sshServer(); err != nil {
-			fmt.Fprintf(os.Stderr, "ssh server error: %v\n", err)
-			os.Exit(1)
+			log.Fatalf("ssh: %v", err)
 		}
-
+	case "bind":
+		if len(os.Args) < 3 {
+			log.Fatal("usage: dexshell bind <port>")
+		}
+		if err := bindShell(os.Args[2]); err != nil {
+			log.Fatalf("bind: %v", err)
+		}
+	case "reverse":
+		if len(os.Args) < 3 {
+			log.Fatal("usage: dexshell reverse <host:port>")
+		}
+		if err := reverseShell(os.Args[2]); err != nil {
+			log.Fatalf("reverse: %v", err)
+		}
 	default:
-		printUsage()
+		fmt.Fprintln(os.Stderr, "usage: dexshell [ssh|bind <port>|reverse <host:port>]")
 		os.Exit(1)
 	}
+}
+
+// loadEnv loads .env without overriding real environment variables.
+// Order: process env (Railway/etc) wins, then .env files fill missing keys.
+func loadEnv() {
+	paths := []string{
+		".env",
+		"/app/.env",
+		filepath.Join(envOr("HOME", "/app"), ".env"),
+	}
+	for _, p := range paths {
+		_ = godotenv.Load(p)
+	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func requireEnv(key string) (string, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return "", fmt.Errorf("%s is required (set in Railway env or /app/.env)", key)
+	}
+	return v, nil
 }
 
 func reverseShell(addr string) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", addr, err)
+		return err
 	}
 	defer conn.Close()
-
-	fmt.Fprintf(os.Stderr, "[*] connected to %s\n", addr)
-
-	cmd := shellCommand()
-	cmd.Stdin = conn
-	cmd.Stdout = conn
-	cmd.Stderr = conn
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start shell: %w", err)
-	}
-
-	return cmd.Wait()
+	return pipeShell(conn)
 }
 
 func bindShell(port string) error {
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return fmt.Errorf("listen :%s: %w", port, err)
+		return err
 	}
 	defer ln.Close()
-
-	fmt.Fprintf(os.Stderr, "[*] bind shell listening on 0.0.0.0:%s\n", port)
-
+	log.Printf("bind listening on :%s", port)
 	conn, err := ln.Accept()
 	if err != nil {
-		return fmt.Errorf("accept: %w", err)
+		return err
 	}
 	defer conn.Close()
+	return pipeShell(conn)
+}
 
-	fmt.Fprintf(os.Stderr, "[*] connection from %s\n", conn.RemoteAddr())
-
-	cmd := shellCommand()
-	cmd.Stdin = conn
-	cmd.Stdout = conn
-	cmd.Stderr = conn
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start shell: %w", err)
+func pipeShell(rw io.ReadWriter) error {
+	cmd := shellCmd("")
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		// fallback without pty
+		cmd = shellCmd("")
+		cmd.Stdin = rw.(io.Reader)
+		cmd.Stdout = rw.(io.Writer)
+		cmd.Stderr = rw.(io.Writer)
+		return cmd.Run()
 	}
+	defer ptmx.Close()
 
-	return cmd.Wait()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(ptmx, rw)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(rw, ptmx)
+	}()
+	err = cmd.Wait()
+	wg.Wait()
+	return err
 }
 
 func sshServer() error {
-	password := getEnv("SSH_PASSWORD", "risuncode")
-	// Prefer explicit SSH_PORT, then platform PORT, then 4444 (public TCP).
-	port := getEnv("SSH_PORT", getEnv("PORT", "4444"))
-	user := getEnv("SSH_USER", "root")
-	home := getEnv("HOME", defaultHome)
+	password, err := requireEnv("SSH_PASSWORD")
+	if err != nil {
+		return err
+	}
+	user := envOr("SSH_USER", "root")
+	port := envOr("SSH_PORT", envOr("PORT", "4444"))
+	home := envOr("HOME", "/app")
 
 	if err := os.MkdirAll(home, 0o755); err != nil {
-		return fmt.Errorf("prepare home %s: %w", home, err)
+		return err
 	}
-	// Keep process home on the volume so shell history/files persist.
 	_ = os.Setenv("HOME", home)
 
-	key, err := loadOrCreateHostKey(filepath.Join(home, hostKeyRelPath))
+	key, err := loadOrCreateHostKey(filepath.Join(home, ".dexshell", "ssh_host_rsa_key"))
 	if err != nil {
-		return fmt.Errorf("host key: %w", err)
+		return err
 	}
 
-	config := &gossh.ServerConfig{
+	cfg := &gossh.ServerConfig{
 		PasswordCallback: func(c gossh.ConnMetadata, pass []byte) (*gossh.Permissions, error) {
 			if c.User() == user && string(pass) == password {
 				return nil, nil
 			}
-			return nil, fmt.Errorf("authentication failed")
+			return nil, fmt.Errorf("auth failed")
 		},
 	}
-	config.AddHostKey(key)
+	cfg.AddHostKey(key)
 
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return fmt.Errorf("listen :%s: %w", port, err)
+		return err
 	}
 	defer ln.Close()
 
-	fmt.Fprintf(os.Stderr, "[*] SSH server listening on 0.0.0.0:%s\n", port)
-	fmt.Fprintf(os.Stderr, "[*] User: %s\n", user)
-	fmt.Fprintf(os.Stderr, "[*] Home (volume): %s\n", home)
-	fmt.Fprintf(os.Stderr, "[*] Connect: ssh -p %s %s@<host>\n", port, user)
+	log.Printf("SSH on :%s user=%s home=%s", port, user, home)
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Printf("accept error: %v", err)
+			log.Printf("accept: %v", err)
 			continue
 		}
-		go handleSSHConnection(conn, config)
+		go handleSSH(conn, cfg)
 	}
 }
 
-func handleSSHConnection(conn net.Conn, config *gossh.ServerConfig) {
+func handleSSH(conn net.Conn, cfg *gossh.ServerConfig) {
 	defer conn.Close()
 
-	sshConn, chans, reqs, err := gossh.NewServerConn(conn, config)
+	sconn, chans, reqs, err := gossh.NewServerConn(conn, cfg)
 	if err != nil {
-		log.Printf("handshake error: %v", err)
+		log.Printf("handshake: %v", err)
 		return
 	}
-	defer sshConn.Close()
-
-	log.Printf("connection from %s as %s", sshConn.RemoteAddr(), sshConn.User())
+	defer sconn.Close()
+	log.Printf("login %s from %s", sconn.User(), sconn.RemoteAddr())
 	go gossh.DiscardRequests(reqs)
 
-	for newChannel := range chans {
-		if newChannel.ChannelType() != "session" {
-			newChannel.Reject(gossh.UnknownChannelType, "unknown channel type")
+	for nch := range chans {
+		if nch.ChannelType() != "session" {
+			nch.Reject(gossh.UnknownChannelType, "only session")
 			continue
 		}
-
-		channel, requests, err := newChannel.Accept()
+		ch, requests, err := nch.Accept()
 		if err != nil {
-			log.Printf("accept channel error: %v", err)
 			continue
 		}
-
-		go handleSSHSession(channel, requests)
+		go handleSession(ch, requests)
 	}
 }
 
-func handleSSHSession(channel gossh.Channel, requests <-chan *gossh.Request) {
-	defer channel.Close()
+func handleSession(ch gossh.Channel, requests <-chan *gossh.Request) {
+	defer ch.Close()
 
-	cmd := shellCommand()
-	ready := make(chan struct{})
-	var execPayload string
+	var (
+		ptyReq  *ptyRequest
+		wantTTY bool
+		once    sync.Once
+		start   = make(chan string, 1) // "" = shell, else exec command
+	)
 
 	go func() {
 		for req := range requests {
 			switch req.Type {
+			case "pty-req":
+				wantTTY = true
+				pr, err := parsePtyReq(req.Payload)
+				if err == nil {
+					ptyReq = &pr
+				}
+				if req.WantReply {
+					_ = req.Reply(true, nil)
+				}
+			case "window-change":
+				if ptyReq != nil && len(req.Payload) >= 8 {
+					w := binary.BigEndian.Uint32(req.Payload[0:4])
+					h := binary.BigEndian.Uint32(req.Payload[4:8])
+					ptyReq.cols, ptyReq.rows = w, h
+					// resize applied after pty starts via channel below if needed
+				}
+				if req.WantReply {
+					_ = req.Reply(true, nil)
+				}
+			case "env":
+				if req.WantReply {
+					_ = req.Reply(true, nil)
+				}
 			case "shell":
 				if req.WantReply {
-					req.Reply(true, nil)
+					_ = req.Reply(true, nil)
 				}
-				close(ready)
-				return
+				once.Do(func() { start <- "" })
 			case "exec":
-				// payload is a length-prefixed string in SSH, but x/crypto exposes raw bytes
-				// after the uint32 length for standard clients; keep simple: run interactive shell.
-				if req.WantReply {
-					req.Reply(true, nil)
-				}
+				cmd := ""
 				if len(req.Payload) >= 4 {
-					// skip 4-byte length prefix when present
-					n := int(req.Payload[0])<<24 | int(req.Payload[1])<<16 | int(req.Payload[2])<<8 | int(req.Payload[3])
-					if n > 0 && 4+n <= len(req.Payload) {
-						execPayload = string(req.Payload[4 : 4+n])
-					} else {
-						execPayload = string(req.Payload)
+					n := binary.BigEndian.Uint32(req.Payload[0:4])
+					if int(4+n) <= len(req.Payload) {
+						cmd = string(req.Payload[4 : 4+n])
 					}
 				}
-				close(ready)
-				return
-			case "pty-req", "env", "window-change":
 				if req.WantReply {
-					req.Reply(true, nil)
+					_ = req.Reply(true, nil)
 				}
+				once.Do(func() { start <- cmd })
 			default:
 				if req.WantReply {
-					req.Reply(false, nil)
+					_ = req.Reply(false, nil)
 				}
 			}
 		}
+		once.Do(func() { start <- "" })
 	}()
 
-	<-ready
-
-	if execPayload != "" {
-		home := getEnv("HOME", defaultHome)
-		cmd = exec.Command("/bin/sh", "-lc", execPayload)
-		cmd.Dir = home
-		cmd.Env = shellEnv(home)
-	}
-
-	cmd.Stdin = channel
-	cmd.Stdout = channel
-	cmd.Stderr = channel
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("start shell error: %v", err)
-		return
-	}
-
-	_ = cmd.Wait()
+	cmdStr := <-start
+	runSession(ch, cmdStr, wantTTY, ptyReq)
 }
 
-func loadOrCreateHostKey(path string) (gossh.Signer, error) {
-	if data, err := os.ReadFile(path); err == nil {
-		signer, err := gossh.ParsePrivateKey(data)
-		if err != nil {
-			return nil, fmt.Errorf("parse host key %s: %w", path, err)
-		}
-		log.Printf("loaded host key from %s", path)
-		return signer, nil
-	}
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, err
-	}
-
-	block := &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
-	}
-	pemBytes := pem.EncodeToMemory(block)
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
-		return nil, fmt.Errorf("write host key %s: %w", path, err)
-	}
-	log.Printf("generated host key at %s", path)
-
-	return gossh.ParsePrivateKey(pemBytes)
+type ptyRequest struct {
+	term string
+	cols uint32
+	rows uint32
 }
 
-func shellCommand() *exec.Cmd {
-	home := getEnv("HOME", defaultHome)
+func parsePtyReq(b []byte) (ptyRequest, error) {
+	var pr ptyRequest
+	if len(b) < 4 {
+		return pr, fmt.Errorf("short pty-req")
+	}
+	n := binary.BigEndian.Uint32(b[0:4])
+	if int(4+n) > len(b) {
+		return pr, fmt.Errorf("bad term")
+	}
+	pr.term = string(b[4 : 4+n])
+	rest := b[4+n:]
+	if len(rest) < 16 {
+		return pr, fmt.Errorf("short size")
+	}
+	pr.cols = binary.BigEndian.Uint32(rest[0:4])
+	pr.rows = binary.BigEndian.Uint32(rest[4:8])
+	if pr.term == "" {
+		pr.term = "xterm"
+	}
+	if pr.cols == 0 {
+		pr.cols = 80
+	}
+	if pr.rows == 0 {
+		pr.rows = 24
+	}
+	return pr, nil
+}
+
+func runSession(ch gossh.Channel, cmdStr string, wantTTY bool, pr *ptyRequest) {
+	home := envOr("HOME", "/app")
 	_ = os.MkdirAll(home, 0o755)
 
 	var cmd *exec.Cmd
-	for _, sh := range []string{"/bin/bash", "/bin/sh", "/bin/ash"} {
-		if path, err := exec.LookPath(sh); err == nil {
-			// login-ish interactive shell so rc files under HOME are picked up
-			if filepath.Base(path) == "bash" {
-				cmd = exec.Command(path, "-il")
-			} else {
-				cmd = exec.Command(path, "-i")
-			}
-			break
-		}
+	if cmdStr != "" {
+		cmd = exec.Command("/bin/bash", "-lc", cmdStr)
+	} else {
+		cmd = shellCmd(termFrom(pr))
 	}
-	if cmd == nil {
-		cmd = exec.Command("/bin/sh", "-i")
+	cmd.Dir = home
+	cmd.Env = shellEnv(home, termFrom(pr))
+
+	// PuTTY and normal SSH clients need a real PTY.
+	if wantTTY || cmdStr == "" {
+		ptmx, err := pty.Start(cmd)
+		if err != nil {
+			log.Printf("pty start: %v — fallback plain", err)
+			cmd.Stdin = ch
+			cmd.Stdout = ch
+			cmd.Stderr = ch
+			_ = cmd.Run()
+			return
+		}
+		defer func() {
+			_ = ptmx.Close()
+			_, _ = cmd.Process.Wait()
+		}()
+
+		if pr != nil {
+			_ = setWinsize(ptmx, pr.cols, pr.rows)
+		}
+
+		// keep resizing if client sends window-change — best-effort via process group
+		go func() {
+			_, _ = io.Copy(ptmx, ch)
+			_ = ptmx.Close()
+		}()
+		_, _ = io.Copy(ch, ptmx)
+		_ = cmd.Wait()
+		return
 	}
 
+	cmd.Stdin = ch
+	cmd.Stdout = ch
+	cmd.Stderr = ch
+	_ = cmd.Run()
+}
+
+func shellCmd(term string) *exec.Cmd {
+	home := envOr("HOME", "/app")
+	cmd := exec.Command("/bin/bash", "-il")
+	if _, err := exec.LookPath("/bin/bash"); err != nil {
+		cmd = exec.Command("/bin/sh", "-i")
+	}
 	cmd.Dir = home
-	cmd.Env = shellEnv(home)
+	cmd.Env = shellEnv(home, term)
 	return cmd
 }
 
-func shellEnv(home string) []string {
+func termFrom(pr *ptyRequest) string {
+	if pr != nil && pr.term != "" {
+		return pr.term
+	}
+	return envOr("TERM", "xterm-256color")
+}
+
+func shellEnv(home, term string) []string {
+	if term == "" {
+		term = "xterm-256color"
+	}
 	env := os.Environ()
 	env = append(env,
 		"HOME="+home,
 		"PWD="+home,
-		"TERM=xterm-256color",
+		"TERM="+term,
 	)
 	return env
 }
 
-func getEnv(key, defaultVal string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultVal
+func setWinsize(f *os.File, cols, rows uint32) error {
+	return pty.Setsize(f, &pty.Winsize{
+		Rows: uint16(rows),
+		Cols: uint16(cols),
+	})
 }
 
-func printUsage() {
-	fmt.Fprintf(os.Stderr, `DexShell - Simple remote shell tool untuk Docker containers
+func loadOrCreateHostKey(path string) (gossh.Signer, error) {
+	if b, err := os.ReadFile(path); err == nil {
+		return gossh.ParsePrivateKey(b)
+	}
 
-Penggunaan:
-  dexshell                Jalankan SSH server (default)
-  dexshell ssh            Jalankan SSH server
-  dexshell reverse <host:port>
-  dexshell bind <port>
-
-Environment:
-  SSH_PASSWORD   Password login (default: changeme)
-  SSH_PORT       Port SSH (default: PORT atau 4444)
-  SSH_USER       Username (default: root)
-  HOME           Home/session dir (default: /app, mount volume di sini)
-
-Contoh:
-  dexshell
-  ssh -p 4444 root@vps.sunwa.web.id
-`)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		return nil, err
+	}
+	log.Printf("host key created: %s", path)
+	return gossh.ParsePrivateKey(pemBytes)
 }

@@ -1,6 +1,7 @@
 .git
 .codegraph
 bin
+vendor
 *.exe
 dexshell
 .env
