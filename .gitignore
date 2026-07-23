@@ -8,9 +8,6 @@ bin/
 # Environment variables (sensitive)
 .env
 
-# Go specific
-go.sum
-
 # CodeGraph
 .codegraph/
 
