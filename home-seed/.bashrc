@@ -18,6 +18,10 @@ export PYTHONUSERBASE="${PYTHONUSERBASE:-$HOME/.local}"
 export PIP_USER=1
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export TERM="${TERM:-xterm-256color}"
+# Nerd Font is installed server-side as JetBrainsMono Nerd Font.
+# Your SSH client (Windows Terminal / PuTTY / iTerm) must also use that font
+# to actually render icons/glyphs.
+export DEXSHELL_NERD_FONT="JetBrainsMono Nerd Font"
 
 # Handy aliases
 alias ll='ls -alF'

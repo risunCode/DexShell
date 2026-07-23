@@ -233,7 +233,20 @@ Empty new volumes often only show `lost+found` until you write data — that is 
 **Network:** curl, wget, git, openssh-client, nmap, tcpdump, netcat, dnsutils, traceroute  
 **Agent installer deps:** xz-utils, ripgrep, ffmpeg, build-essential, python3, pip, venv  
 **Runtimes baked for later installs:** Node.js (npm), Bun  
+**Fonts:** JetBrainsMono Nerd Font (default monospace via fontconfig)  
 **Info:** fastfetch (optional package; `neofetch` alias when available)
+
+### Nerd Font note (important)
+
+The image installs **JetBrainsMono Nerd Font** and sets it as the preferred `monospace` family for apps that honor **fontconfig** (some Linux GUI/TUI stacks).
+
+SSH itself does **not** push fonts to your laptop. Glyphs/icons still depend on the font selected in your **SSH client**:
+
+- Windows Terminal / VS Code terminal → set font to `JetBrainsMono Nerd Font`
+- PuTTY → Appearance → Font → pick the Nerd Font installed on Windows
+- macOS iTerm/Terminal → profile font → JetBrainsMono Nerd Font
+
+Install the same font on your client from [Nerd Fonts – JetBrainsMono](https://github.com/ryanoasis/nerd-fonts/releases/latest).
 
 DexShell does **not** preinstall third-party coding agents (Claude Code, Codex, OpenCode, Kilo, Kimchi, Hermes, …). The image aims to make those **installable**.
 
