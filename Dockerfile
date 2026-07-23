@@ -15,7 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TERM=xterm-256color \
     PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Core packages only (must exist on Debian 13).
+# apt-get update is required during image build (package index is not cached in slim).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     psmisc \
     htop \
+    btop \
     tmux \
     vim \
     nano \
@@ -49,9 +50,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     sudo \
     locales \
+    speedtest-cli \
+    dialog \
     && rm -rf /var/lib/apt/lists/*
 
-# Optional eyecandy: neofetch is gone on Trixie; fastfetch may exist.
+# Optional: fastfetch (+ neofetch alias). Skip if package missing.
 RUN apt-get update \
     && (apt-get install -y --no-install-recommends fastfetch \
         && ln -sf "$(command -v fastfetch)" /usr/local/bin/neofetch \
