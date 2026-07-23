@@ -1,10 +1,12 @@
 # ---------- Builder stage ----------
+# ---------- Builder stage ----------
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o /dexshell .
+# Build static binary inside /src
+RUN CGO_ENABLED=0 GOOS=linux go build -o dexshell .
 
 # ---------- Runtime stage ----------
 FROM debian:stable-slim
@@ -46,7 +48,8 @@ RUN apt update && apt install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /dexshell /app/dexshell
+# Copy the built binary from builder
+COPY --from=builder /src/dexshell /app/dexshell
 RUN chmod +x /app/dexshell
 EXPOSE 4444 2222
 CMD ["/app/dexshell", "bind", "4444"]
