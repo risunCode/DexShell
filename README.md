@@ -394,7 +394,8 @@ Main pieces:
 |---|---|
 | `main.go` | SSH/SFTP/bind/reverse + PTY + env/home layout |
 | `Dockerfile` | Multi-stage Go build + Debian 13 runtime |
-| `entrypoint.sh` | Volume bootstrap + persistent env, then exec |
+| `docker/entrypoint.sh` | Volume bootstrap + persistent env, then exec |
+| `docker/install-runtime.sh` | Slim Dockerfile install steps (base/hermes/finalize) |
 | `home-seed/` | First-boot dotfiles/config copied into `/app` if missing |
 | `railway.toml` | Dockerfile builder + start command |
 

@@ -54,7 +54,7 @@ COPY rootfs/ /
 RUN /tmp/install-runtime.sh hermes
 
 COPY home-seed/ /opt/dexshell/home-seed/
-COPY entrypoint.sh /usr/local/bin/dexshell-entrypoint
+COPY docker/entrypoint.sh /usr/local/bin/dexshell-entrypoint
 RUN /tmp/install-runtime.sh finalize && rm -f /tmp/install-runtime.sh
 
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
