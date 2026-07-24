@@ -47,8 +47,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TMP=/tmp \
     TEMP=/tmp
 
-COPY docker/install.sh /tmp/install.sh
-RUN chmod +x /tmp/install.sh && /tmp/install.sh base
+# Keep install helper outside /tmp — clean_tmp wipes /tmp/* between steps.
+COPY docker/install.sh /opt/dexshell/install.sh
+RUN chmod +x /opt/dexshell/install.sh && /opt/dexshell/install.sh base
 
 # Image helpers + Hermes requirements (repo layout != container FHS)
 COPY docker/bin/hermes \
@@ -63,11 +64,11 @@ RUN chmod 755 /usr/local/bin/hermes \
               /usr/local/bin/hermes-inject \
               /usr/local/bin/volume-ready \
     && chmod 644 /etc/profile.d/10-volume-env.sh \
-    && /tmp/install.sh hermes
+    && /opt/dexshell/install.sh hermes
 
 COPY docker/home/ /opt/dexshell/home-seed/
 COPY docker/entrypoint.sh /usr/local/bin/dexshell-entrypoint
-RUN /tmp/install.sh finalize && rm -f /tmp/install.sh
+RUN /opt/dexshell/install.sh finalize && rm -f /opt/dexshell/install.sh
 
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
 RUN chmod 755 /usr/local/bin/dexshell && mkdir -p /app
