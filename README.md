@@ -225,6 +225,67 @@ These default under `/app` so installs and configs survive redeploys **when stor
 
 Empty new volumes often only show `lost+found` until you write data — that is normal.
 
+### Storage policy: `/tmp` vs `/app`
+
+| Kind | Path | Survives redeploy? | Railway size (typical) |
+|---|---|---|---|
+| **Scratch** (downloads, build caches, extract) | `/tmp` | ❌ no | ~**10GB** free & hobby |
+| **Durable** (tools you keep, configs, repos) | `/app` volume | ✅ yes | **500MB** free / **5GB** hobby |
+
+**Rule:** installers download & build in **temp**; only the finished install lands on the **volume** when possible.
+
+```bash
+volume-ready    # layout + free space checker for /app and /tmp
+```
+
+Checker warns when volume free &lt; ~100MB (critical &lt; ~30MB) or `/tmp` free &lt; ~500MB.
+
+### Approximate disk use (planning numbers)
+
+These are **order-of-magnitude** estimates for capacity planning, not guarantees.
+
+#### Image build / final image (not your volume)
+
+| Component | Build scratch (temp) | Final image layer (approx) |
+|---|---|---|
+| Base Debian tools (apt set) | 200–500MB peak | **250–450MB** |
+| Node.js 22 | 100–200MB peak | **80–150MB** |
+| Bun (binary only kept) | 50–120MB peak | **40–80MB** |
+| JetBrainsMono Nerd Font | 50–150MB zip peak | **10–40MB** |
+| Hermes support (Python 3.11 + telegram/ddgs/firecrawl wheels) | 300–700MB peak | **150–350MB** |
+| **Whole DexShell image (compressed registry)** | — | often **~0.8–1.5GB** |
+| **Unpacked image on builder** | — | often **~1.5–3GB** |
+
+Build uses `/tmp` aggressively and cleans caches each step so the builder temp (~10GB) stays workable.
+
+#### Runtime volume `/app` (your 500MB / 5GB budget)
+
+| What you put on volume | Approx after install |
+|---|---|
+| Dotfiles / host key / small config | **&lt; 5MB** |
+| Hermes full install (`hermes-install`) | **250–450MB** |
+| One coding CLI via npm/bun global | **50–200MB** each |
+| Git repos / projects | size of the repo |
+| Caches left on volume by mistake | can blow free tier fast |
+
+**Free tier (500MB) guidance**
+- Comfortable: configs + small projects + **one** agent (or Hermes alone if careful)
+- Tight: Hermes + several global CLIs
+- Avoid: dumping `apt` caches, large model weights, or npm/bun caches onto `/app`
+
+**Hobby (5GB) guidance**
+- Hermes + several CLIs + multiple repos is realistic
+- Still keep scratch in `/tmp`
+
+#### Peak temp during common runtime installs
+
+| Action | Temp peak (approx) | Durable on `/app` |
+|---|---|---|
+| `hermes-install` | 0.5–1.5GB while downloading/building | 250–450MB |
+| `npm i -g …` large CLI | 100–400MB | 50–200MB |
+| `bun install -g …` | 50–300MB | varies |
+| `apt install …` | uses image FS (not volume); lost on redeploy | n/a |
+
 ---
 
 ## Included image tooling (high level)

@@ -10,10 +10,12 @@ export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export TMPDIR="${TMPDIR:-/tmp}"
 export TMP="${TMP:-/tmp}"
 export TEMP="${TEMP:-/tmp}"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
+# Caches always in temp (ephemeral ~10GB). Final Hermes tree stays on volume.
+export UV_CACHE_DIR="/tmp/uv-cache"
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$HOME_DIR/.local/share/uv/python}"
-export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-/tmp/npm-cache}"
-export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/tmp/pip-cache}"
+export NPM_CONFIG_CACHE="/tmp/npm-cache"
+export PIP_CACHE_DIR="/tmp/pip-cache"
+export XDG_CACHE_HOME="/tmp/xdg-cache"
 
 mkdir -p \
   "$HOME_DIR/bin" \

@@ -81,6 +81,18 @@ link_if "$HOME_DIR/.bun/bin/bunx" bunx
 link_if "$HOME_DIR/.hermes/hermes-agent/.venv/bin/hermes" hermes.bin
 link_if "$HOME_DIR/.hermes/bin/hermes" hermes.bin
 
+# Quiet capacity check (never block boot). Full report: volume-ready
+if command -v df >/dev/null 2>&1; then
+  vol_free="$(df -PB1 "$HOME_DIR" 2>/dev/null | awk 'NR==2 {print $4}')"
+  tmp_free="$(df -PB1 /tmp 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [[ -n "${vol_free:-}" && "$vol_free" -lt $((30 * 1024 * 1024)) ]]; then
+    echo "[dexshell] WARN: volume $HOME_DIR almost full (run: volume-ready)" >&2
+  fi
+  if [[ -n "${tmp_free:-}" && "$tmp_free" -lt $((200 * 1024 * 1024)) ]]; then
+    echo "[dexshell] WARN: /tmp low on space (run: volume-ready)" >&2
+  fi
+fi
+
 # Seed Hermes free-first web config once (ddgs). Firecrawl used when key is set by user.
 if [[ ! -f "$HOME_DIR/.hermes/config.yaml" ]]; then
   if [[ -f /opt/dexshell/home-seed/.hermes/config.yaml ]]; then

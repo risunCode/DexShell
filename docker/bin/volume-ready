@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Ensure volume layout + print where tools should install.
+# Ensure volume layout + report /app vs /tmp capacity.
+# Policy: durable installs → volume (/app). Scratch downloads/build → /tmp.
 set -euo pipefail
+
 HOME_DIR="${HOME:-/app}"
 export HOME="$HOME_DIR"
+TMP_DIR="${TMPDIR:-/tmp}"
 
 dirs=(
   bin .local/bin .config .cache .local/share .local/state .dexshell projects
@@ -32,16 +35,86 @@ link_if "$HOME_DIR/.local/bin/codex" codex
 link_if "$HOME_DIR/.hermes/hermes-agent/.venv/bin/hermes" hermes.bin
 link_if "$HOME_DIR/.hermes/bin/hermes" hermes.bin
 
+human_df() {
+  local path="$1"
+  if df -hB1 "$path" >/dev/null 2>&1; then
+    df -hB1 "$path" | awk 'NR==2 {printf "%s total, %s used, %s avail (%s)\n",$2,$3,$4,$5}'
+  else
+    df -h "$path" | awk 'NR==2 {printf "%s total, %s used, %s avail (%s)\n",$2,$3,$4,$5}'
+  fi
+}
+
+bytes_avail() {
+  local path="$1"
+  df -PB1 "$path" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+vol_avail="$(bytes_avail "$HOME_DIR" || echo 0)"
+tmp_avail="$(bytes_avail "$TMP_DIR" || echo 0)"
+
+# Rough thresholds (bytes)
+warn_vol=$((100 * 1024 * 1024))   # 100MB free on volume → warn
+crit_vol=$((30 * 1024 * 1024))    # 30MB → critical
+warn_tmp=$((500 * 1024 * 1024))   # 500MB free on tmp → warn
+
+status_line() {
+  local name="$1" avail="$2" warn="$3" crit="${4:-0}"
+  if [[ -z "$avail" || "$avail" -le 0 ]]; then
+    echo "  $name: unknown"
+    return
+  fi
+  local msg
+  msg="$(numfmt --to=iec --suffix=B "$avail" 2>/dev/null || echo "${avail}B")"
+  if [[ "$crit" -gt 0 && "$avail" -lt "$crit" ]]; then
+    echo "  $name free: $msg  [CRITICAL — almost full]"
+  elif [[ "$avail" -lt "$warn" ]]; then
+    echo "  $name free: $msg  [WARN — getting tight]"
+  else
+    echo "  $name free: $msg  [ok]"
+  fi
+}
+
 cat <<EOF
 DexShell volume layout ready under: $HOME_DIR
 
-Install targets (survive redeploy when volume mounts /app):
-  binaries     -> \$HOME/bin  or  \$HOME/.local/bin
-  npm -g       -> \$HOME/.npm-global   (npm_config_prefix)
-  bun -g       -> \$HOME/.bun          (BUN_INSTALL)
-  pip --user   -> \$HOME/.local        (PYTHONUSERBASE)
-  Hermes       -> \$HOME/.hermes       (run: hermes-install)
-  Claude/Codex configs use HOME/XDG under /app automatically
+Storage policy
+  durable (survive redeploy)  →  $HOME_DIR  (Railway volume)
+  scratch (downloads/build)   →  $TMP_DIR   (ephemeral, ~10GB on Railway)
 
+df
+  volume ($HOME_DIR): $(human_df "$HOME_DIR")
+  temp   ($TMP_DIR):  $(human_df "$TMP_DIR")
+
+checker
+EOF
+status_line "volume" "$vol_avail" "$warn_vol" "$crit_vol"
+status_line "temp" "$tmp_avail" "$warn_tmp" 0
+
+cat <<EOF
+
+Railway plan guide (approx)
+  Free:  volume 500MB  | temp ~10GB
+  Hobby: volume 5GB    | temp ~10GB
+
+Where to install
+  binaries     → \$HOME/bin or \$HOME/.local/bin
+  npm -g       → \$HOME/.npm-global   (npm_config_prefix)
+  bun -g       → \$HOME/.bun          (BUN_INSTALL)
+  pip --user   → \$HOME/.local        (PYTHONUSERBASE)
+  Hermes       → \$HOME/.hermes       (run: hermes-install)
+  apt packages → image layer only (ephemeral unless baked)
+
+Rough volume budgets (after install, not download size)
+  Hermes agent tree      ~250–450MB
+  Node global CLIs each  ~50–200MB
+  Bun global pkgs        varies
+  Projects/git repos     your data
+
+Tip: keep caches in /tmp when possible; only final tools/config on /app.
 PATH already prefers volume bins. No manual export needed after login.
 EOF
+
+# Non-zero if volume critically full (useful for scripts)
+if [[ -n "$vol_avail" && "$vol_avail" -gt 0 && "$vol_avail" -lt "$crit_vol" ]]; then
+  exit 2
+fi

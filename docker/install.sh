@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Image build helpers. Keep Dockerfile thin — all heavy install lives here.
 # Usage: install.sh <base|hermes|finalize>
-set -euo pipefail
+set -eu
+# NOTE: do not enable pipefail globally — curl|bash / fc-list|grep can yield SIGPIPE (141).
 
 export DEBIAN_FRONTEND=noninteractive
 export TMPDIR=/tmp TMP=/tmp TEMP=/tmp
@@ -10,6 +11,17 @@ clean_tmp() {
   apt-get clean 2>/dev/null || true
   rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
     /tmp/* /var/tmp/* /root/.cache /root/.npm 2>/dev/null || true
+}
+
+run_curl_bash() {
+  # Avoid pipefail/SIGPIPE (exit 141) from curl|bash progress pipes.
+  local url="$1"
+  shift
+  local tmp
+  tmp="$(mktemp /tmp/install-script.XXXXXX.sh)"
+  curl -fsSL "$url" -o "$tmp"
+  bash "$tmp" "$@"
+  rm -f "$tmp"
 }
 
 install_base() {
@@ -36,7 +48,7 @@ install_base() {
 
   # Node 22 (fallback distro node)
   apt-get update
-  if curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  if run_curl_bash https://deb.nodesource.com/setup_22.x \
     && apt-get install -y --no-install-recommends nodejs; then
     :
   else
@@ -48,19 +60,20 @@ install_base() {
   clean_tmp
 
   # Bun → system binary only (globals later use $BUN_INSTALL on volume)
-  BUN_INSTALL=/tmp/bun-install
-  export BUN_INSTALL
-  # prevent installer writing into ENV HOME=/app
-  HOME=/root BUN_INSTALL=/tmp/bun-install curl -fsSL https://bun.sh/install | bash
+  # Install into /tmp, copy binary out, never leave install root under /app.
+  export HOME=/root
+  export BUN_INSTALL=/tmp/bun-install
+  mkdir -p /tmp/bun-install
+  run_curl_bash https://bun.sh/install
   install -m 755 /tmp/bun-install/bin/bun /usr/local/bin/bun
   if [[ -x /tmp/bun-install/bin/bunx ]]; then
     install -m 755 /tmp/bun-install/bin/bunx /usr/local/bin/bunx
   fi
-  bun --version
+  /usr/local/bin/bun --version
   rm -rf /tmp/bun-install /root/.bun
   clean_tmp
 
-  # JetBrainsMono Nerd Font
+  # JetBrainsMono Nerd Font (download/extract in /tmp only)
   mkdir -p /usr/local/share/fonts/truetype/jetbrainsmono-nerd /tmp/fonts
   curl -fsSL -o /tmp/fonts/JetBrainsMono.zip \
     https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip
@@ -82,7 +95,10 @@ install_base() {
 </fontconfig>
 XML
   fc-cache -f
-  fc-list | grep -qi jetbrains
+  # Soft-check only: font family string varies slightly across releases.
+  if ! fc-list 2>/dev/null | grep -qi 'jetbrains'; then
+    echo "WARN: JetBrains font not visible to fc-list yet (continuing)" >&2
+  fi
   clean_tmp
   rm -rf /var/cache/fontconfig/* 2>/dev/null || true
 }
@@ -95,11 +111,15 @@ install_hermes_support() {
   export UV_LINK_MODE=copy
   export UV_PYTHON_INSTALL_DIR=/opt/dexshell/uv/python
 
-  curl -fsSL https://astral.sh/uv/install.sh | sh
+  run_curl_bash https://astral.sh/uv/install.sh
   UV_BIN=""
   for c in /root/.local/bin/uv /root/.cargo/bin/uv "$(command -v uv || true)"; do
     if [[ -n "$c" && -x "$c" ]]; then UV_BIN="$c"; break; fi
   done
+  if [[ -z "$UV_BIN" || ! -x "$UV_BIN" ]]; then
+    echo "uv binary not found after install" >&2
+    exit 1
+  fi
   install -m 755 "$UV_BIN" /usr/local/bin/uv
   uv --version
   uv python install 3.11
