@@ -1,6 +1,5 @@
-# DexShell — SSH/SFTP on Debian 13, userland bound to /app volume.
-# Binary stays outside /app so Railway volume mounts cannot hide it.
-# Build-time downloads/extracts use /tmp only, then cleaned (don't bloat image or volume).
+# DexShell — thin Dockerfile. Heavy install logic lives in docker/install-runtime.sh
+# Binary outside /app so Railway volume mounts cannot hide it.
 FROM golang:1.25-trixie AS builder
 
 WORKDIR /src
@@ -12,7 +11,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 
 FROM debian:trixie-slim
 
-# Runtime defaults (volume paths). Build steps below override TMP/BUN dirs to /tmp.
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/app \
     TERM=xterm-256color \
@@ -49,170 +47,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TMP=/tmp \
     TEMP=/tmp
 
-# Base tools + coding-agent installer deps (apt work stays in /var + /tmp, then purged).
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-      bash \
-      ca-certificates \
-      curl \
-      wget \
-      git \
-      xz-utils \
-      openssh-client \
-      netcat-openbsd \
-      iproute2 \
-      iputils-ping \
-      dnsutils \
-      traceroute \
-      net-tools \
-      procps \
-      psmisc \
-      htop \
-      btop \
-      tmux \
-      vim \
-      nano \
-      less \
-      jq \
-      tree \
-      nmap \
-      tcpdump \
-      strace \
-      lsof \
-      zip \
-      unzip \
-      rsync \
-      python3 \
-      python3-pip \
-      python3-venv \
-      sudo \
-      locales \
-      speedtest-cli \
-      dialog \
-      ripgrep \
-      ffmpeg \
-      build-essential \
-      pkg-config \
-      file \
-      gnupg \
-      fontconfig; \
-    sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
-    locale-gen en_US.UTF-8; \
-    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
+COPY docker/install-runtime.sh /tmp/install-runtime.sh
+RUN chmod +x /tmp/install-runtime.sh && /tmp/install-runtime.sh base
 
-# Optional eyecandy.
-RUN set -eux; \
-    apt-get update; \
-    (apt-get install -y --no-install-recommends fastfetch \
-      && ln -sf "$(command -v fastfetch)" /usr/local/bin/neofetch \
-      || echo "fastfetch not available, skip"); \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
-
-# Node.js 22 — NodeSource setup uses /tmp; purge apt caches after.
-RUN set -eux; \
-    apt-get update; \
-    (curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-      && apt-get install -y --no-install-recommends nodejs \
-      || apt-get install -y --no-install-recommends nodejs npm); \
-    node -v; \
-    npm -v; \
-    npm cache clean --force 2>/dev/null || true; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/* /root/.npm
-
-# Bun: install into /tmp, keep only binary in /usr/local/bin (NOT /app — volume is runtime-only).
-RUN set -eux; \
-    BUN_INSTALL=/tmp/bun-install; \
-    export BUN_INSTALL TMPDIR=/tmp TMP=/tmp TEMP=/tmp; \
-    curl -fsSL https://bun.sh/install | bash; \
-    install -m 755 /tmp/bun-install/bin/bun /usr/local/bin/bun; \
-    if [ -x /tmp/bun-install/bin/bunx ]; then install -m 755 /tmp/bun-install/bin/bunx /usr/local/bin/bunx; fi; \
-    /usr/local/bin/bun --version; \
-    rm -rf /tmp/bun-install /tmp/* /root/.bun /var/tmp/*
-
-# JetBrainsMono Nerd Font — download/unzip in /tmp only.
-RUN set -eux; \
-    mkdir -p /usr/local/share/fonts/truetype/jetbrainsmono-nerd /tmp/fonts; \
-    curl -fsSL -o /tmp/fonts/JetBrainsMono.zip \
-      https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip; \
-    unzip -qo /tmp/fonts/JetBrainsMono.zip -d /tmp/fonts/JetBrainsMono; \
-    find /tmp/fonts/JetBrainsMono -type f \( -iname '*.ttf' -o -iname '*.otf' \) \
-      -exec cp -a {} /usr/local/share/fonts/truetype/jetbrainsmono-nerd/ \; ; \
-    printf '%s\n' \
-      '<?xml version="1.0"?>' \
-      '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">' \
-      '<fontconfig>' \
-      '  <alias>' \
-      '    <family>monospace</family>' \
-      '    <prefer><family>JetBrainsMono Nerd Font</family></prefer>' \
-      '  </alias>' \
-      '  <alias>' \
-      '    <family>JetBrains Mono</family>' \
-      '    <prefer><family>JetBrainsMono Nerd Font</family></prefer>' \
-      '  </alias>' \
-      '</fontconfig>' \
-      > /etc/fonts/conf.d/59-dexshell-jetbrainsmono-nerd.conf; \
-    fc-cache -f; \
-    (fc-list | grep -qi 'JetBrainsMono' || fc-list | grep -qi 'JetBrains'); \
-    rm -rf /tmp/fonts /tmp/* /var/tmp/* /var/cache/fontconfig/*
-
-# Volume-bound profile + helpers (hermes wrapper, installers, path defaults).
 COPY rootfs/ /
-RUN mkdir -p /opt/dexshell/wrappers \
-    && cp -a /usr/local/bin/hermes /opt/dexshell/wrappers/hermes \
-    && chmod 755 /usr/local/bin/hermes \
-                 /opt/dexshell/wrappers/hermes \
-                 /usr/local/bin/dexshell-install-hermes \
-                 /usr/local/bin/dexshell-inject-hermes-deps \
-                 /usr/local/bin/dexshell-volume-ready \
-    && chmod 644 /etc/profile.d/dexshell-volume.sh \
-    && rm -rf /tmp/* /var/tmp/*
+RUN /tmp/install-runtime.sh hermes
 
-# Hermes support stack (isolated Python 3.11 — does not replace system python3).
-# Preinstall Telegram + free websearch (ddgs) + firecrawl + pip tooling into a
-# support venv and wheelhouse so volume Hermes installs can inject offline-ish.
-RUN set -eux; \
-    export TMPDIR=/tmp TMP=/tmp TEMP=/tmp; \
-    export UV_CACHE_DIR=/tmp/uv-cache; \
-    export UV_LINK_MODE=copy; \
-    export UV_PYTHON_INSTALL_DIR=/opt/dexshell/uv/python; \
-    curl -fsSL https://astral.sh/uv/install.sh | sh; \
-    UV_BIN=""; \
-    if [ -x /root/.local/bin/uv ]; then UV_BIN=/root/.local/bin/uv; fi; \
-    if [ -x /root/.cargo/bin/uv ]; then UV_BIN=/root/.cargo/bin/uv; fi; \
-    if [ -z "$UV_BIN" ]; then UV_BIN="$(command -v uv)"; fi; \
-    install -m 755 "$UV_BIN" /usr/local/bin/uv; \
-    /usr/local/bin/uv --version; \
-    /usr/local/bin/uv python install 3.11; \
-    mkdir -p /opt/dexshell/hermes-support/wheels; \
-    /usr/local/bin/uv venv --python 3.11 /opt/dexshell/hermes-support/venv; \
-    /opt/dexshell/hermes-support/venv/bin/python -m pip install -U pip wheel setuptools; \
-    /opt/dexshell/hermes-support/venv/bin/python -m pip download \
-      -d /opt/dexshell/hermes-support/wheels \
-      -r /opt/dexshell/hermes-support/requirements.txt; \
-    /opt/dexshell/hermes-support/venv/bin/python -m pip install \
-      --no-index --find-links=/opt/dexshell/hermes-support/wheels \
-      -r /opt/dexshell/hermes-support/requirements.txt \
-      || /opt/dexshell/hermes-support/venv/bin/python -m pip install \
-           -r /opt/dexshell/hermes-support/requirements.txt; \
-    /opt/dexshell/hermes-support/venv/bin/python -c "import telegram, ddgs; print('hermes-support imports ok')"; \
-    rm -rf /tmp/uv-cache /tmp/pip-cache /tmp/* /var/tmp/* /root/.cache 2>/dev/null || true
-
-# Seed files for first boot onto the volume (copied by entrypoint if missing).
 COPY home-seed/ /opt/dexshell/home-seed/
 COPY entrypoint.sh /usr/local/bin/dexshell-entrypoint
-RUN chmod 755 /usr/local/bin/dexshell-entrypoint \
-    && find /opt/dexshell/home-seed -type f -exec chmod 644 {} \; \
-    && rm -rf /tmp/* /var/tmp/*
+RUN /tmp/install-runtime.sh finalize && rm -f /tmp/install-runtime.sh
 
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
-RUN chmod 755 /usr/local/bin/dexshell \
-    && mkdir -p /app \
-    && rm -rf /tmp/* /var/tmp/* /root/.cache 2>/dev/null || true
+RUN chmod 755 /usr/local/bin/dexshell && mkdir -p /app
 
 WORKDIR /app
 EXPOSE 4444
