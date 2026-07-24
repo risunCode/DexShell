@@ -67,13 +67,17 @@ RUN chmod 755 /usr/local/bin/hermes \
     && /opt/dexshell/install.sh hermes
 
 COPY docker/home/ /opt/dexshell/home-seed/
+COPY docker/www/ /opt/dexshell/www/
 COPY docker/entrypoint.sh /usr/local/bin/dexshell-entrypoint
 RUN /opt/dexshell/install.sh finalize && rm -f /opt/dexshell/install.sh
 
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
-RUN chmod 755 /usr/local/bin/dexshell && mkdir -p /app
+RUN chmod 755 /usr/local/bin/dexshell && mkdir -p /app \
+    && chmod 644 /opt/dexshell/www/index.html 2>/dev/null || true
 
 WORKDIR /app
-EXPOSE 4444
+EXPOSE 4444 8080
+ENV HTTP_PORT=8080 \
+    DEXSHELL_WWW=/opt/dexshell/www
 ENTRYPOINT ["/usr/local/bin/dexshell-entrypoint"]
 CMD ["/usr/local/bin/dexshell", "ssh"]

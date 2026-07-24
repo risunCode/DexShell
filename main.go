@@ -11,11 +11,13 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/joho/godotenv"
@@ -142,7 +144,9 @@ func sshServer() error {
 		return err
 	}
 	user := envOr("SSH_USER", "root")
-	port := envOr("SSH_PORT", envOr("PORT", "4444"))
+	// SSH stays on dedicated port (Railway TCP proxy). Do not steal platform PORT
+	// if that is reserved for the public HTTP domain.
+	port := envOr("SSH_PORT", "4444")
 	home := envOr("HOME", "/app")
 
 	if err := ensureHomeLayout(home); err != nil {
@@ -165,6 +169,13 @@ func sshServer() error {
 	}
 	cfg.AddHostKey(key)
 
+	// Public landing page for HTTP domains (/, health).
+	go func() {
+		if err := startHTTPLanding(); err != nil {
+			log.Printf("http landing: %v", err)
+		}
+	}()
+
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		return err
@@ -181,6 +192,59 @@ func sshServer() error {
 		}
 		go handleSSH(conn, cfg)
 	}
+}
+
+func startHTTPLanding() error {
+	// Prefer explicit HTTP_PORT, then platform PORT, then 8080.
+	httpPort := envOr("HTTP_PORT", envOr("PORT", "8080"))
+	// If someone set PORT equal to SSH_PORT, keep SSH exclusive and shift web.
+	sshPort := envOr("SSH_PORT", "4444")
+	if httpPort == sshPort {
+		httpPort = "8080"
+		if sshPort == "8080" {
+			httpPort = "8081"
+		}
+	}
+
+	root := envOr("DEXSHELL_WWW", "/opt/dexshell/www")
+	index := filepath.Join(root, "index.html")
+	fs := http.FileServer(http.Dir(root))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Frame-Options", "DENY")
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			if _, err := os.Stat(index); err == nil {
+				http.ServeFile(w, r, index)
+				return
+			}
+			// minimal fallback — no operational details
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>DexShell</title><body style="margin:0;background:#020805;color:#39ff14;font-family:monospace;min-height:100vh;display:grid;place-items:center"><main style="text-align:center"><h1 style="letter-spacing:.08em">Welcome to DexShell</h1><p style="color:#4f7a5c;text-transform:uppercase;letter-spacing:.2em;font-size:12px">access node</p></main></body>`))
+			return
+		}
+		// don't list directory / expose random files
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		fs.ServeHTTP(w, r)
+	})
+
+	srv := &http.Server{
+		Addr:              ":" + httpPort,
+		Handler:           mux,
+		ReadHeaderTimeout: 8 * time.Second,
+	}
+	log.Printf("HTTP landing on :%s root=%s", httpPort, root)
+	return srv.ListenAndServe()
 }
 
 func handleSSH(conn net.Conn, cfg *gossh.ServerConfig) {
