@@ -105,11 +105,17 @@ XML
 
 install_hermes_support() {
   # Isolated Python 3.11 support stack for Hermes Telegram/web deps.
-  # Force HOME=/root so uv does not install under ENV HOME=/app.
+  # Override image HOME/XDG (/app) so uv never writes into the volume path during build.
   export HOME=/root
+  export XDG_CONFIG_HOME=/root/.config
+  export XDG_DATA_HOME=/root/.local/share
+  export XDG_STATE_HOME=/root/.local/state
+  export XDG_CACHE_HOME=/tmp/xdg-cache
   export UV_CACHE_DIR=/tmp/uv-cache
   export UV_LINK_MODE=copy
   export UV_PYTHON_INSTALL_DIR=/opt/dexshell/uv/python
+  export PIP_CACHE_DIR=/tmp/pip-cache
+  mkdir -p /tmp/xdg-cache /tmp/uv-cache /tmp/pip-cache /root/.local/bin
 
   run_curl_bash https://astral.sh/uv/install.sh
   UV_BIN=""
@@ -127,18 +133,22 @@ install_hermes_support() {
   mkdir -p /opt/dexshell/hermes-support/wheels
   # --seed ensures pip exists in the venv
   uv venv --python 3.11 --seed /opt/dexshell/hermes-support/venv
-  uv pip install --python /opt/dexshell/hermes-support/venv -U pip wheel setuptools
-  uv pip download --python /opt/dexshell/hermes-support/venv \
+  VENV_PY=/opt/dexshell/hermes-support/venv/bin/python
+
+  # uv has no stable `pip download`; use venv pip for wheelhouse + install.
+  "$VENV_PY" -m pip install -U pip wheel setuptools
+  "$VENV_PY" -m pip download \
     -d /opt/dexshell/hermes-support/wheels \
     -r /opt/dexshell/hermes-support/requirements.txt
-  uv pip install --python /opt/dexshell/hermes-support/venv \
-    --find-links=/opt/dexshell/hermes-support/wheels \
-    -r /opt/dexshell/hermes-support/requirements.txt
+  "$VENV_PY" -m pip install \
+    --no-index --find-links=/opt/dexshell/hermes-support/wheels \
+    -r /opt/dexshell/hermes-support/requirements.txt \
+    || "$VENV_PY" -m pip install -r /opt/dexshell/hermes-support/requirements.txt
 
-  /opt/dexshell/hermes-support/venv/bin/python -c "import telegram, ddgs; print('hermes-support imports ok')"
+  "$VENV_PY" -c "import telegram, ddgs; print('hermes-support imports ok')"
 
   # drop any accidental writes under /app during build
-  rm -rf /app/.local /app/bin /tmp/uv-cache /tmp/pip-cache
+  rm -rf /app/.local /app/bin /tmp/uv-cache /tmp/pip-cache /tmp/xdg-cache
   clean_tmp
 }
 
