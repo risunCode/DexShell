@@ -115,6 +115,10 @@ install_hermes_support() {
   export UV_LINK_MODE=copy
   export UV_PYTHON_INSTALL_DIR=/opt/dexshell/uv/python
   export PIP_CACHE_DIR=/tmp/pip-cache
+  # Image ENV sets PIP_USER=1 for runtime volume installs; that breaks venv pip.
+  unset PIP_USER || true
+  export PIP_USER=0
+  unset PYTHONUSERBASE || true
   mkdir -p /tmp/xdg-cache /tmp/uv-cache /tmp/pip-cache /root/.local/bin
 
   run_curl_bash https://astral.sh/uv/install.sh
