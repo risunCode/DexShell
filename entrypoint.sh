@@ -78,6 +78,30 @@ link_if "$HOME_DIR/.bun/bin/bunx" bunx
 link_if "$HOME_DIR/.hermes/hermes-agent/.venv/bin/hermes" hermes.bin
 link_if "$HOME_DIR/.hermes/bin/hermes" hermes.bin
 
+# Seed Hermes free-first web config once (ddgs). Firecrawl used when key is set by user.
+if [[ ! -f "$HOME_DIR/.hermes/config.yaml" ]]; then
+  if [[ -f /opt/dexshell/home-seed/.hermes/config.yaml ]]; then
+    mkdir -p "$HOME_DIR/.hermes"
+    cp -a /opt/dexshell/home-seed/.hermes/config.yaml "$HOME_DIR/.hermes/config.yaml"
+  fi
+fi
+
+# If Hermes already lives on the volume, quietly ensure Telegram/ddgs/firecrawl deps.
+if [[ -x /usr/local/bin/dexshell-inject-hermes-deps ]]; then
+  for venv in \
+    "$HOME_DIR/.hermes/hermes-agent/.venv" \
+    /usr/local/lib/hermes-agent/.venv
+  do
+    if [[ -x "$venv/bin/python" || -x "$venv/bin/python3" ]]; then
+      # Only inject if telegram import missing (fast path).
+      if ! "$venv/bin/python" -c "import telegram" 2>/dev/null; then
+        /usr/local/bin/dexshell-inject-hermes-deps "$venv" >/tmp/dexshell-hermes-inject.log 2>&1 || true
+      fi
+      break
+    fi
+  done
+fi
+
 # Default command: SSH server
 if [[ $# -eq 0 ]]; then
   set -- /usr/local/bin/dexshell ssh

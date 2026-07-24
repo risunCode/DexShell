@@ -4,7 +4,7 @@
 
 DexShell is a tiny Go binary that turns a Docker/Railway container into a usable remote Linux box over **SSH** (and **SFTP**), with optional bind/reverse shell modes. It is built for PaaS environments where a volume mount would otherwise hide your app binary.
 
-> **v1.0.0 Stable** — Debian 13 (trixie), SSH + SFTP, PTY-ready, volume-safe layout under `/app`.
+> **v1.0.1** — Debian 13 (trixie), SSH + SFTP, PTY-ready, volume-safe `/app`, Bun/Node, Hermes Telegram + free websearch (`ddgs`) + Firecrawl support prebaked.
 
 ---
 

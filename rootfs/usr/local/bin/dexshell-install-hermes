@@ -7,13 +7,13 @@ export HOME="$HOME_DIR"
 export HERMES_HOME="${HERMES_HOME:-$HOME_DIR/.hermes}"
 export PATH="$HOME_DIR/bin:$HOME_DIR/.local/bin:/usr/local/bin:/usr/local/share/uv/bin:${PATH:-}"
 export UV_LINK_MODE="${UV_LINK_MODE:-copy}"
-# Keep heavy download/build caches in /tmp during install, then keep only final tree on volume.
 export TMPDIR="${TMPDIR:-/tmp}"
 export TMP="${TMP:-/tmp}"
 export TEMP="${TEMP:-/tmp}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$HOME_DIR/.local/share/uv/python}"
 export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-/tmp/npm-cache}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/tmp/pip-cache}"
 
 mkdir -p \
   "$HOME_DIR/bin" \
@@ -22,7 +22,18 @@ mkdir -p \
   "$HERMES_HOME/logs" \
   "$HERMES_HOME/bin" \
   "$HOME_DIR/.local/share/uv/python" \
-  /tmp/uv-cache /tmp/npm-cache
+  /tmp/uv-cache /tmp/npm-cache /tmp/pip-cache
+
+# Seed free-first web config once.
+if [[ ! -f "$HERMES_HOME/config.yaml" && -f /opt/dexshell/home-seed/.hermes/config.yaml ]]; then
+  cp -a /opt/dexshell/home-seed/.hermes/config.yaml "$HERMES_HOME/config.yaml"
+fi
+if [[ ! -f "$HERMES_HOME/config.yaml" ]]; then
+  cat > "$HERMES_HOME/config.yaml" <<'YAML'
+web:
+  backend: ddgs
+YAML
+fi
 
 echo "[dexshell] Installing Hermes into volume:"
 echo "  HERMES_HOME=$HERMES_HOME"
@@ -56,7 +67,6 @@ do
   fi
 done
 
-# Broader search
 if [[ -z "$real" ]]; then
   real="$(find "$HERMES_HOME" /usr/local/lib/hermes-agent -type f -name hermes 2>/dev/null | head -n 1 || true)"
 fi
@@ -69,23 +79,30 @@ else
   echo "[dexshell] WARNING: could not find hermes binary after install" >&2
 fi
 
-# Best-effort messaging deps inside volume venv
-venv_pip=""
-for p in \
-  "$HERMES_HOME/hermes-agent/.venv/bin/pip" \
-  "$HERMES_HOME/hermes-agent/.venv/bin/pip3"
+# Inject Telegram + free search + firecrawl into the Hermes venv (Python 3.11 hermes env).
+venv_dir=""
+for d in \
+  "$HERMES_HOME/hermes-agent/.venv" \
+  /usr/local/lib/hermes-agent/.venv
 do
-  if [[ -x "$p" ]]; then venv_pip="$p"; break; fi
+  if [[ -x "$d/bin/python" || -x "$d/bin/python3" ]]; then
+    venv_dir="$d"
+    break
+  fi
 done
 
-if [[ -n "$venv_pip" ]]; then
-  echo "[dexshell] Ensuring Telegram/Discord Python deps in volume venv..."
-  "$venv_pip" install -U pip wheel setuptools >/dev/null 2>&1 || true
-  "$venv_pip" install -U "python-telegram-bot>=21" "discord.py>=2" || true
+if [[ -n "$venv_dir" && -x /usr/local/bin/dexshell-inject-hermes-deps ]]; then
+  /usr/local/bin/dexshell-inject-hermes-deps "$venv_dir" || true
+elif [[ -n "$venv_dir" ]]; then
+  echo "[dexshell] Fallback pip inject into $venv_dir"
+  "$venv_dir/bin/python" -m pip install -U pip wheel setuptools || true
+  "$venv_dir/bin/python" -m pip install \
+    "python-telegram-bot[webhooks]>=22.6,<23" \
+    "ddgs" \
+    "firecrawl-py" || true
 fi
 
-# If the upstream installer clobbered /usr/local/bin/hermes, keep the real binary
-# and restore our volume-first wrapper.
+# If the upstream installer clobbered /usr/local/bin/hermes, restore wrapper.
 if [[ -x /usr/local/bin/hermes ]] && ! grep -q 'Volume-first Hermes launcher' /usr/local/bin/hermes 2>/dev/null; then
   mv -f /usr/local/bin/hermes /usr/local/bin/hermes.real
   if [[ -x /opt/dexshell/wrappers/hermes ]]; then
@@ -93,8 +110,7 @@ if [[ -x /usr/local/bin/hermes ]] && ! grep -q 'Volume-first Hermes launcher' /u
   fi
 fi
 
-# Drop install caches so volume/tmp don't stay bloated.
-rm -rf /tmp/uv-cache /tmp/npm-cache /tmp/hermes-install* /tmp/bun-install 2>/dev/null || true
+rm -rf /tmp/uv-cache /tmp/npm-cache /tmp/pip-cache /tmp/hermes-install* /tmp/bun-install 2>/dev/null || true
 find /tmp -maxdepth 1 -type f -name 'hermes*' -delete 2>/dev/null || true
 
 hash -r || true
@@ -102,3 +118,4 @@ echo "[dexshell] Done."
 echo "  which via wrapper: $(command -v hermes || true)"
 echo "  try: hermes --help"
 echo "  then: hermes gateway setup && hermes gateway start"
+echo "  web: ddgs (free) default; set FIRECRAWL_API_KEY to use Firecrawl"

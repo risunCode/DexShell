@@ -1,0 +1,16 @@
+# Hermes support packages (isolated from system Python).
+# Target: Hermes runtime Python 3.11 via uv (does not replace Debian python3).
+#
+# Telegram (official Hermes messaging extra range)
+python-telegram-bot[webhooks]>=22.6,<23
+
+# Free web search (DuckDuckGo)
+ddgs
+
+# Firecrawl web search/extract/crawl (needs FIRECRAWL_API_KEY at runtime)
+firecrawl-py
+
+# Install tooling
+pip
+wheel
+setuptools

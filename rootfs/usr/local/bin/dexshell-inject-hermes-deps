@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Inject prebaked Hermes support deps (Telegram, ddgs, firecrawl) into a venv.
+set -euo pipefail
+
+TARGET_VENV="${1:-}"
+REQ_FILE="${DEXSHELL_HERMES_REQ:-/opt/dexshell/hermes-support/requirements.txt}"
+WHEELHOUSE="${DEXSHELL_HERMES_WHEELHOUSE:-/opt/dexshell/hermes-support/wheels}"
+
+if [[ -z "$TARGET_VENV" || ! -d "$TARGET_VENV" ]]; then
+  echo "usage: dexshell-inject-hermes-deps <venv-dir>" >&2
+  exit 2
+fi
+
+pip="$TARGET_VENV/bin/pip"
+py="$TARGET_VENV/bin/python"
+if [[ ! -x "$pip" && -x "$TARGET_VENV/bin/pip3" ]]; then
+  pip="$TARGET_VENV/bin/pip3"
+fi
+if [[ ! -x "$pip" || ! -x "$py" ]]; then
+  echo "[dexshell] no pip/python in $TARGET_VENV" >&2
+  exit 1
+fi
+
+export TMPDIR="${TMPDIR:-/tmp}"
+export TMP="${TMP:-/tmp}"
+export TEMP="${TEMP:-/tmp}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/tmp/pip-cache}"
+mkdir -p "$PIP_CACHE_DIR"
+
+echo "[dexshell] Injecting Hermes support deps into $TARGET_VENV"
+"$py" -m pip install -U pip wheel setuptools
+
+if [[ -d "$WHEELHOUSE" ]] && compgen -G "$WHEELHOUSE/*" >/dev/null 2>&1; then
+  "$py" -m pip install --no-index --find-links="$WHEELHOUSE" -r "$REQ_FILE" \
+    || "$py" -m pip install -r "$REQ_FILE"
+else
+  "$py" -m pip install -r "$REQ_FILE"
+fi
+
+# quick import checks (best-effort)
+"$py" - <<'PY' || true
+mods = [
+    ("telegram", "python-telegram-bot"),
+    ("ddgs", "ddgs"),
+    ("firecrawl", "firecrawl-py"),
+]
+for mod, name in mods:
+    try:
+        __import__(mod)
+        print(f"  OK import {name} ({mod})")
+    except Exception as e:
+        print(f"  WARN import {name}: {e}")
+PY
+
+rm -rf /tmp/pip-cache 2>/dev/null || true
+echo "[dexshell] Hermes support deps ready."

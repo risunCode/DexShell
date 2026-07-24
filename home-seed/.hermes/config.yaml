@@ -1,0 +1,4 @@
+# Seed only (entrypoint copies if missing). Safe free-first defaults.
+# Firecrawl is used when FIRECRAWL_API_KEY is present; otherwise ddgs (free).
+web:
+  backend: ddgs

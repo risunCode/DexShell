@@ -167,9 +167,40 @@ RUN mkdir -p /opt/dexshell/wrappers \
     && chmod 755 /usr/local/bin/hermes \
                  /opt/dexshell/wrappers/hermes \
                  /usr/local/bin/dexshell-install-hermes \
+                 /usr/local/bin/dexshell-inject-hermes-deps \
                  /usr/local/bin/dexshell-volume-ready \
     && chmod 644 /etc/profile.d/dexshell-volume.sh \
     && rm -rf /tmp/* /var/tmp/*
+
+# Hermes support stack (isolated Python 3.11 — does not replace system python3).
+# Preinstall Telegram + free websearch (ddgs) + firecrawl + pip tooling into a
+# support venv and wheelhouse so volume Hermes installs can inject offline-ish.
+RUN set -eux; \
+    export TMPDIR=/tmp TMP=/tmp TEMP=/tmp; \
+    export UV_CACHE_DIR=/tmp/uv-cache; \
+    export UV_LINK_MODE=copy; \
+    export UV_PYTHON_INSTALL_DIR=/opt/dexshell/uv/python; \
+    curl -fsSL https://astral.sh/uv/install.sh | sh; \
+    UV_BIN=""; \
+    if [ -x /root/.local/bin/uv ]; then UV_BIN=/root/.local/bin/uv; fi; \
+    if [ -x /root/.cargo/bin/uv ]; then UV_BIN=/root/.cargo/bin/uv; fi; \
+    if [ -z "$UV_BIN" ]; then UV_BIN="$(command -v uv)"; fi; \
+    install -m 755 "$UV_BIN" /usr/local/bin/uv; \
+    /usr/local/bin/uv --version; \
+    /usr/local/bin/uv python install 3.11; \
+    mkdir -p /opt/dexshell/hermes-support/wheels; \
+    /usr/local/bin/uv venv --python 3.11 /opt/dexshell/hermes-support/venv; \
+    /opt/dexshell/hermes-support/venv/bin/python -m pip install -U pip wheel setuptools; \
+    /opt/dexshell/hermes-support/venv/bin/python -m pip download \
+      -d /opt/dexshell/hermes-support/wheels \
+      -r /opt/dexshell/hermes-support/requirements.txt; \
+    /opt/dexshell/hermes-support/venv/bin/python -m pip install \
+      --no-index --find-links=/opt/dexshell/hermes-support/wheels \
+      -r /opt/dexshell/hermes-support/requirements.txt \
+      || /opt/dexshell/hermes-support/venv/bin/python -m pip install \
+           -r /opt/dexshell/hermes-support/requirements.txt; \
+    /opt/dexshell/hermes-support/venv/bin/python -c "import telegram, ddgs; print('hermes-support imports ok')"; \
+    rm -rf /tmp/uv-cache /tmp/pip-cache /tmp/* /var/tmp/* /root/.cache 2>/dev/null || true
 
 # Seed files for first boot onto the volume (copied by entrypoint if missing).
 COPY home-seed/ /opt/dexshell/home-seed/
