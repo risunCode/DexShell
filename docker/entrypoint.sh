@@ -25,7 +25,10 @@ if [[ -d "$SEED_DIR" ]]; then
 fi
 
 # shellcheck disable=SC1091
-if [[ -f /etc/profile.d/dexshell-volume.sh ]]; then
+if [[ -f /etc/profile.d/10-volume-env.sh ]]; then
+  # shellcheck source=/dev/null
+  source /etc/profile.d/10-volume-env.sh
+elif [[ -f /etc/profile.d/dexshell-volume.sh ]]; then
   # shellcheck source=/dev/null
   source /etc/profile.d/dexshell-volume.sh
 fi
@@ -87,7 +90,7 @@ if [[ ! -f "$HOME_DIR/.hermes/config.yaml" ]]; then
 fi
 
 # If Hermes already lives on the volume, quietly ensure Telegram/ddgs/firecrawl deps.
-if [[ -x /usr/local/bin/dexshell-inject-hermes-deps ]]; then
+if [[ -x /usr/local/bin/hermes-inject ]]; then
   for venv in \
     "$HOME_DIR/.hermes/hermes-agent/.venv" \
     /usr/local/lib/hermes-agent/.venv
@@ -95,7 +98,7 @@ if [[ -x /usr/local/bin/dexshell-inject-hermes-deps ]]; then
     if [[ -x "$venv/bin/python" || -x "$venv/bin/python3" ]]; then
       # Only inject if telegram import missing (fast path).
       if ! "$venv/bin/python" -c "import telegram" 2>/dev/null; then
-        /usr/local/bin/dexshell-inject-hermes-deps "$venv" >/tmp/dexshell-hermes-inject.log 2>&1 || true
+        /usr/local/bin/hermes-inject "$venv" >/tmp/dexshell-hermes-inject.log 2>&1 || true
       fi
       break
     fi

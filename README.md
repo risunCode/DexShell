@@ -254,8 +254,8 @@ Example (after deploy):
 
 ```bash
 # Hermes data on volume
-export HERMES_HOME=/app/.hermes
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser
+hermes-install
+# or: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser
 
 # Other CLIs (examples — check upstream docs)
 curl -fsSL https://claude.ai/install.sh | bash
@@ -395,8 +395,10 @@ Main pieces:
 | `main.go` | SSH/SFTP/bind/reverse + PTY + env/home layout |
 | `Dockerfile` | Multi-stage Go build + Debian 13 runtime |
 | `docker/entrypoint.sh` | Volume bootstrap + persistent env, then exec |
-| `docker/install-runtime.sh` | Slim Dockerfile install steps (base/hermes/finalize) |
-| `home-seed/` | First-boot dotfiles/config copied into `/app` if missing |
+| `docker/install.sh` | Slim Dockerfile install steps (`base` / `hermes` / `finalize`) |
+| `docker/home/` | First-boot dotfiles/config copied into `/app` if missing |
+| `docker/bin/` | Image helpers (`hermes`, `hermes-install`, `hermes-inject`, `volume-ready`, `volume-env.sh`) |
+| `docker/hermes-requirements.txt` | Prebaked Hermes support Python deps |
 | `railway.toml` | Dockerfile builder + start command |
 
 ---

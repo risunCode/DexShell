@@ -1,10 +1,12 @@
 # DexShell persistent home (volume: /app) — sourced on interactive shells.
-# Paths are also set by /etc/profile.d/dexshell-volume.sh and the entrypoint.
+# Paths are also set by /etc/profile.d/10-volume-env.sh and the entrypoint.
 
 export HOME="${HOME:-/app}"
 
 # shellcheck disable=SC1091
-if [ -f /etc/profile.d/dexshell-volume.sh ]; then
+if [ -f /etc/profile.d/10-volume-env.sh ]; then
+  . /etc/profile.d/10-volume-env.sh
+elif [ -f /etc/profile.d/dexshell-volume.sh ]; then
   . /etc/profile.d/dexshell-volume.sh
 fi
 
@@ -63,7 +65,7 @@ alias fastfetch='ff'
 #   bun install -g ...     -> $BUN_INSTALL (/app/.bun)
 #   npm install -g ...     -> $npm_config_prefix (/app/.npm-global)
 #   pip install --user ... -> $PYTHONUSERBASE (/app/.local)
-#   hermes                 -> dexshell-install-hermes  (onto /app/.hermes)
+#   hermes                 -> hermes-install  (onto /app/.hermes)
 #   custom bins            -> $HOME/bin
 
 PS1='\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '

@@ -1,4 +1,4 @@
-# DexShell — thin Dockerfile. Heavy install logic lives in docker/install-runtime.sh
+# DexShell — thin Dockerfile. Heavy install logic lives in docker/install.sh
 # Binary outside /app so Railway volume mounts cannot hide it.
 FROM golang:1.25-trixie AS builder
 
@@ -47,15 +47,27 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TMP=/tmp \
     TEMP=/tmp
 
-COPY docker/install-runtime.sh /tmp/install-runtime.sh
-RUN chmod +x /tmp/install-runtime.sh && /tmp/install-runtime.sh base
+COPY docker/install.sh /tmp/install.sh
+RUN chmod +x /tmp/install.sh && /tmp/install.sh base
 
-COPY rootfs/ /
-RUN /tmp/install-runtime.sh hermes
+# Image helpers + Hermes requirements (repo layout != container FHS)
+COPY docker/bin/hermes \
+     docker/bin/hermes-install \
+     docker/bin/hermes-inject \
+     docker/bin/volume-ready \
+     /usr/local/bin/
+COPY docker/bin/volume-env.sh /etc/profile.d/10-volume-env.sh
+COPY docker/hermes-requirements.txt /opt/dexshell/hermes-support/requirements.txt
+RUN chmod 755 /usr/local/bin/hermes \
+              /usr/local/bin/hermes-install \
+              /usr/local/bin/hermes-inject \
+              /usr/local/bin/volume-ready \
+    && chmod 644 /etc/profile.d/10-volume-env.sh \
+    && /tmp/install.sh hermes
 
-COPY home-seed/ /opt/dexshell/home-seed/
+COPY docker/home/ /opt/dexshell/home-seed/
 COPY docker/entrypoint.sh /usr/local/bin/dexshell-entrypoint
-RUN /tmp/install-runtime.sh finalize && rm -f /tmp/install-runtime.sh
+RUN /tmp/install.sh finalize && rm -f /tmp/install.sh
 
 COPY --from=builder /out/dexshell /usr/local/bin/dexshell
 RUN chmod 755 /usr/local/bin/dexshell && mkdir -p /app

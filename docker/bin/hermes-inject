@@ -7,7 +7,7 @@ REQ_FILE="${DEXSHELL_HERMES_REQ:-/opt/dexshell/hermes-support/requirements.txt}"
 WHEELHOUSE="${DEXSHELL_HERMES_WHEELHOUSE:-/opt/dexshell/hermes-support/wheels}"
 
 if [[ -z "$TARGET_VENV" || ! -d "$TARGET_VENV" ]]; then
-  echo "usage: dexshell-inject-hermes-deps <venv-dir>" >&2
+  echo "usage: hermes-inject <venv-dir>" >&2
   exit 2
 fi
 

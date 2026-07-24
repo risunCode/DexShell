@@ -91,8 +91,8 @@ do
   fi
 done
 
-if [[ -n "$venv_dir" && -x /usr/local/bin/dexshell-inject-hermes-deps ]]; then
-  /usr/local/bin/dexshell-inject-hermes-deps "$venv_dir" || true
+if [[ -n "$venv_dir" && -x /usr/local/bin/hermes-inject ]]; then
+  /usr/local/bin/hermes-inject "$venv_dir" || true
 elif [[ -n "$venv_dir" ]]; then
   echo "[dexshell] Fallback pip inject into $venv_dir"
   "$venv_dir/bin/python" -m pip install -U pip wheel setuptools || true

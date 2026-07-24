@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Image build helpers. Keep Dockerfile thin — all heavy install lives here.
-# Usage: install-runtime.sh <base|hermes|finalize>
+# Usage: install.sh <base|hermes|finalize>
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -129,11 +129,19 @@ finalize_image() {
   fi
   chmod 755 /usr/local/bin/hermes \
             /opt/dexshell/wrappers/hermes \
-            /usr/local/bin/dexshell-install-hermes \
-            /usr/local/bin/dexshell-inject-hermes-deps \
-            /usr/local/bin/dexshell-volume-ready \
+            /usr/local/bin/hermes-install \
+            /usr/local/bin/hermes-inject \
+            /usr/local/bin/volume-ready \
             /usr/local/bin/dexshell-entrypoint 2>/dev/null || true
-  chmod 644 /etc/profile.d/dexshell-volume.sh 2>/dev/null || true
+  # compat aliases for older docs/muscle memory
+  ln -sfn /usr/local/bin/hermes-install /usr/local/bin/dexshell-install-hermes
+  ln -sfn /usr/local/bin/hermes-inject /usr/local/bin/dexshell-inject-hermes-deps
+  ln -sfn /usr/local/bin/volume-ready /usr/local/bin/dexshell-volume-ready
+  chmod 644 /etc/profile.d/10-volume-env.sh 2>/dev/null || true
+  # keep legacy filename symlink if something still sources the old path
+  if [[ -f /etc/profile.d/10-volume-env.sh && ! -e /etc/profile.d/dexshell-volume.sh ]]; then
+    ln -sfn 10-volume-env.sh /etc/profile.d/dexshell-volume.sh
+  fi
   if [[ -d /opt/dexshell/home-seed ]]; then
     find /opt/dexshell/home-seed -type f -exec chmod 644 {} \;
   fi

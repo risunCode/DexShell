@@ -40,7 +40,7 @@ Install targets (survive redeploy when volume mounts /app):
   npm -g       -> \$HOME/.npm-global   (npm_config_prefix)
   bun -g       -> \$HOME/.bun          (BUN_INSTALL)
   pip --user   -> \$HOME/.local        (PYTHONUSERBASE)
-  Hermes       -> \$HOME/.hermes       (run: dexshell-install-hermes)
+  Hermes       -> \$HOME/.hermes       (run: hermes-install)
   Claude/Codex configs use HOME/XDG under /app automatically
 
 PATH already prefers volume bins. No manual export needed after login.

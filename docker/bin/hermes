@@ -32,5 +32,5 @@ fi
 
 echo "hermes not found on volume or system." >&2
 echo "Install onto the volume (survives redeploy):" >&2
-echo "  dexshell-install-hermes" >&2
+echo "  hermes-install" >&2
 exit 127
